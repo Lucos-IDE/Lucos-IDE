@@ -445,6 +445,9 @@ import './contrib/workspaces/browser/workspaces.contribution.js';
 // List
 import './contrib/list/browser/list.contribution.js';
 
+// Lucos AI
+import './contrib/lucos/browser/lucos.contribution.js';
+
 // Accessibility Signals
 import './contrib/accessibilitySignals/browser/accessibilitySignal.contribution.js';
 

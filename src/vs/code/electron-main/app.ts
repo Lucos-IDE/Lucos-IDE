@@ -45,6 +45,8 @@ import { IEnvironmentMainService } from '../../platform/environment/electron-mai
 import { isLaunchedFromCli } from '../../platform/environment/node/argvHelper.js';
 import { getResolvedShellEnv } from '../../platform/shell/node/shellEnv.js';
 import { IExtensionHostStarter, ipcExtensionHostStarterChannelName } from '../../platform/extensions/common/extensionHostStarter.js';
+import { ILucosDaemonNodeService, ipcLucosDaemonChannelName } from '../../platform/lucos/common/lucosDaemonNode.js';
+import { LucosDaemonNodeService } from '../../platform/lucos/node/lucosDaemonNodeService.js';
 import { ExtensionHostStarter } from '../../platform/extensions/electron-main/extensionHostStarter.js';
 import { IExternalTerminalMainService } from '../../platform/externalTerminal/electron-main/externalTerminal.js';
 import { LinuxExternalTerminalService, MacExternalTerminalService, WindowsExternalTerminalService } from '../../platform/externalTerminal/node/externalTerminalService.js';
@@ -1148,6 +1150,9 @@ export class CodeApplication extends Disposable {
 		// Extension Host Starter
 		services.set(IExtensionHostStarter, new SyncDescriptor(ExtensionHostStarter));
 
+		// Lucos Daemon (gRPC bridge to the local daemon)
+		services.set(ILucosDaemonNodeService, new SyncDescriptor(LucosDaemonNodeService));
+
 		// Storage
 		services.set(IStorageMainService, new SyncDescriptor(StorageMainService));
 		services.set(IApplicationStorageMainService, new SyncDescriptor(ApplicationStorageMainService));
@@ -1382,6 +1387,10 @@ export class CodeApplication extends Disposable {
 		// Extension Host Starter
 		const extensionHostStarterChannel = ProxyChannel.fromService(accessor.get(IExtensionHostStarter), disposables);
 		mainProcessElectronServer.registerChannel(ipcExtensionHostStarterChannelName, extensionHostStarterChannel);
+
+		// Lucos Daemon
+		const lucosDaemonChannel = ProxyChannel.fromService(accessor.get(ILucosDaemonNodeService), disposables);
+		mainProcessElectronServer.registerChannel(ipcLucosDaemonChannelName, lucosDaemonChannel);
 
 		// Utility Process Worker
 		const utilityProcessWorkerChannel = ProxyChannel.fromService(accessor.get(IUtilityProcessWorkerMainService), disposables);

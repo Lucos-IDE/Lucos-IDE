@@ -1,0 +1,54 @@
+/*---------------------------------------------------------------------------------------------
+ *  Lucos IDE — sign-in / sign-out commands + startup session restore (TW-198).
+ *  Classes are registered from lucos.contribution.ts (the single registration hub).
+ *--------------------------------------------------------------------------------------------*/
+
+import { localize2 } from '../../../../nls.js';
+import { Action2 } from '../../../../platform/actions/common/actions.js';
+import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { Disposable } from '../../../../base/common/lifecycle.js';
+import { IWorkbenchContribution } from '../../../common/contributions.js';
+import { ILucosAuthService } from '../common/lucosAuthService.js';
+
+const LUCOS_CATEGORY = localize2('lucos', "Lucos");
+
+export class LucosLoginAction extends Action2 {
+	static readonly ID = 'lucos.login';
+	constructor() {
+		super({
+			id: LucosLoginAction.ID,
+			title: localize2('lucos.login.title', "Sign In"),
+			category: LUCOS_CATEGORY,
+			f1: true,
+		});
+	}
+	run(accessor: ServicesAccessor): Promise<boolean> {
+		return accessor.get(ILucosAuthService).login();
+	}
+}
+
+export class LucosLogoutAction extends Action2 {
+	static readonly ID = 'lucos.logout';
+	constructor() {
+		super({
+			id: LucosLogoutAction.ID,
+			title: localize2('lucos.logout.title', "Sign Out"),
+			category: LUCOS_CATEGORY,
+			f1: true,
+		});
+	}
+	run(accessor: ServicesAccessor): Promise<void> {
+		return accessor.get(ILucosAuthService).logout();
+	}
+}
+
+/** Resumes a stored session on startup by handing any keychain JWT to the daemon. */
+export class LucosAuthRestoreContribution extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.lucosAuthRestore';
+	constructor(
+		@ILucosAuthService lucosAuthService: ILucosAuthService,
+	) {
+		super();
+		void lucosAuthService.restore();
+	}
+}
