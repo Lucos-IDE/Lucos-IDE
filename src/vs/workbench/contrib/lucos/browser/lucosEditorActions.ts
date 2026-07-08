@@ -1,8 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — editor & command-palette AI actions (TW-163 Cmd+K, TW-167 palette).
+ *  Lucos IDE — editor & command-palette AI actions (TW-163 Cmd+K, TW-167 palette, TW-184 picker).
  *  Each action captures editor context and hands a goal to the chat view via
  *  ILucosChatRequestService; the existing streaming + patch-review flow handles the result.
- *  Registered from lucos.contribution.ts.
+ *
+ *  IMPORTANT: the ServicesAccessor is only valid during the SYNCHRONOUS part of run(). All
+ *  services must be resolved up front (before any await) and used as instances thereafter.
  *--------------------------------------------------------------------------------------------*/
 
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
@@ -24,8 +26,8 @@ import { LUCOS_CHAT_VIEW_ID } from './lucosCommands.js';
 
 const LUCOS_CATEGORY = localize2('lucos', "Lucos");
 
-function captureSelectionContext(accessor: ServicesAccessor): ILucosWorkspaceContext | undefined {
-	const editor = accessor.get(IEditorService).activeTextEditorControl;
+function captureSelectionContext(editorService: IEditorService): ILucosWorkspaceContext | undefined {
+	const editor = editorService.activeTextEditorControl;
 	if (isCodeEditor(editor)) {
 		const model = editor.getModel();
 		const selection = editor.getSelection();
@@ -39,9 +41,9 @@ function captureSelectionContext(accessor: ServicesAccessor): ILucosWorkspaceCon
 	return undefined;
 }
 
-async function submitToChat(accessor: ServicesAccessor, goal: string, context: ILucosWorkspaceContext | undefined): Promise<void> {
-	await accessor.get(IViewsService).openView(LUCOS_CHAT_VIEW_ID, true);
-	accessor.get(ILucosChatRequestService).submit({ goal, context });
+async function submitToChat(viewsService: IViewsService, chatRequestService: ILucosChatRequestService, goal: string, context: ILucosWorkspaceContext | undefined, selectedAgentPath?: string): Promise<void> {
+	await viewsService.openView(LUCOS_CHAT_VIEW_ID, true);
+	chatRequestService.submit({ goal, context, selectedAgentPath });
 }
 
 export class LucosCmdKAction extends Action2 {
@@ -63,8 +65,13 @@ export class LucosCmdKAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const context = captureSelectionContext(accessor);
-		const instruction = await accessor.get(IQuickInputService).input({
+		const editorService = accessor.get(IEditorService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const viewsService = accessor.get(IViewsService);
+		const chatRequestService = accessor.get(ILucosChatRequestService);
+
+		const context = captureSelectionContext(editorService);
+		const instruction = await quickInputService.input({
 			prompt: localize('lucos.cmdK.prompt', "Describe the edit for Lucos to make"),
 			placeHolder: localize('lucos.cmdK.placeholder', "e.g. add error handling"),
 			ignoreFocusLost: true,
@@ -72,7 +79,7 @@ export class LucosCmdKAction extends Action2 {
 		if (!instruction) {
 			return;
 		}
-		await submitToChat(accessor, instruction, context);
+		await submitToChat(viewsService, chatRequestService, instruction, context);
 	}
 }
 
@@ -82,7 +89,7 @@ export class LucosExplainAction extends Action2 {
 		super({ id: LucosExplainAction.ID, title: localize2('lucos.explain.title', "AI: Explain Selection"), category: LUCOS_CATEGORY, f1: true, precondition: EditorContextKeys.hasNonEmptySelection });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
-		return submitToChat(accessor, localize('lucos.explain.goal', "Explain this code."), captureSelectionContext(accessor));
+		return submitToChat(accessor.get(IViewsService), accessor.get(ILucosChatRequestService), localize('lucos.explain.goal', "Explain this code."), captureSelectionContext(accessor.get(IEditorService)));
 	}
 }
 
@@ -92,12 +99,17 @@ export class LucosRefactorAction extends Action2 {
 		super({ id: LucosRefactorAction.ID, title: localize2('lucos.refactor.title', "AI: Refactor Selection"), category: LUCOS_CATEGORY, f1: true, precondition: EditorContextKeys.writable });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const context = captureSelectionContext(accessor);
-		const instruction = await accessor.get(IQuickInputService).input({ prompt: localize('lucos.refactor.prompt', "How should Lucos refactor this?"), ignoreFocusLost: true });
+		const editorService = accessor.get(IEditorService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const viewsService = accessor.get(IViewsService);
+		const chatRequestService = accessor.get(ILucosChatRequestService);
+
+		const context = captureSelectionContext(editorService);
+		const instruction = await quickInputService.input({ prompt: localize('lucos.refactor.prompt', "How should Lucos refactor this?"), ignoreFocusLost: true });
 		if (!instruction) {
 			return;
 		}
-		await submitToChat(accessor, localize('lucos.refactor.goal', "Refactor this code: {0}", instruction), context);
+		await submitToChat(viewsService, chatRequestService, localize('lucos.refactor.goal', "Refactor this code: {0}", instruction), context);
 	}
 }
 
@@ -107,7 +119,7 @@ export class LucosGenerateTestsAction extends Action2 {
 		super({ id: LucosGenerateTestsAction.ID, title: localize2('lucos.generateTests.title', "AI: Generate Tests"), category: LUCOS_CATEGORY, f1: true, precondition: EditorContextKeys.writable });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
-		return submitToChat(accessor, localize('lucos.generateTests.goal', "Generate unit tests for this code."), captureSelectionContext(accessor));
+		return submitToChat(accessor.get(IViewsService), accessor.get(ILucosChatRequestService), localize('lucos.generateTests.goal', "Generate unit tests for this code."), captureSelectionContext(accessor.get(IEditorService)));
 	}
 }
 
@@ -117,7 +129,7 @@ export class LucosReviewChangesAction extends Action2 {
 		super({ id: LucosReviewChangesAction.ID, title: localize2('lucos.reviewChanges.title', "AI: Review Changes"), category: LUCOS_CATEGORY, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
-		return submitToChat(accessor, localize('lucos.reviewChanges.goal', "Review my current git changes and flag issues."), undefined);
+		return submitToChat(accessor.get(IViewsService), accessor.get(ILucosChatRequestService), localize('lucos.reviewChanges.goal', "Review my current git changes and flag issues."), undefined);
 	}
 }
 
@@ -131,25 +143,32 @@ export class LucosSelectCustomizationAction extends Action2 {
 		super({ id: LucosSelectCustomizationAction.ID, title: localize2('lucos.customization.title', "AI: Run Skill or Agent"), category: LUCOS_CATEGORY, f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const workspaceRoot = accessor.get(IWorkspaceContextService).getWorkspace().folders[0]?.uri.fsPath ?? '';
-		const customizations = await accessor.get(ILucosDaemonService).listCustomizations(workspaceRoot);
+		const workspaceContextService = accessor.get(IWorkspaceContextService);
+		const daemonService = accessor.get(ILucosDaemonService);
+		const notificationService = accessor.get(INotificationService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const viewsService = accessor.get(IViewsService);
+		const chatRequestService = accessor.get(ILucosChatRequestService);
+		const editorService = accessor.get(IEditorService);
+
+		const workspaceRoot = workspaceContextService.getWorkspace().folders[0]?.uri.fsPath ?? '';
+		const customizations = await daemonService.listCustomizations(workspaceRoot);
 		const items: ICustomizationPickItem[] = [
 			...customizations.agents.map(agent => ({ label: `$(person) ${agent.displayName}`, description: agent.description, path: agent.path })),
 			...customizations.skills.map(skill => ({ label: `$(sparkle) ${skill.name}`, description: skill.description, path: skill.path })),
 		];
 		if (!items.length) {
-			accessor.get(INotificationService).notify({ severity: Severity.Info, message: localize('lucos.customization.none', "No Lucos skills or agents found in this workspace.") });
+			notificationService.notify({ severity: Severity.Info, message: localize('lucos.customization.none', "No Lucos skills or agents found in this workspace.") });
 			return;
 		}
-		const choice = await accessor.get(IQuickInputService).pick(items, { placeHolder: localize('lucos.customization.pick', "Select a skill or agent to run") });
+		const choice = await quickInputService.pick(items, { placeHolder: localize('lucos.customization.pick', "Select a skill or agent to run") });
 		if (!choice) {
 			return;
 		}
-		const instruction = await accessor.get(IQuickInputService).input({ prompt: localize('lucos.customization.prompt', "What should it do?"), ignoreFocusLost: true });
+		const instruction = await quickInputService.input({ prompt: localize('lucos.customization.prompt', "What should it do?"), ignoreFocusLost: true });
 		if (!instruction) {
 			return;
 		}
-		await accessor.get(IViewsService).openView(LUCOS_CHAT_VIEW_ID, true);
-		accessor.get(ILucosChatRequestService).submit({ goal: instruction, context: captureSelectionContext(accessor), selectedAgentPath: choice.path });
+		await submitToChat(viewsService, chatRequestService, instruction, captureSelectionContext(editorService), choice.path);
 	}
 }
