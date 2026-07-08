@@ -587,6 +587,10 @@
 			"project": "vscode-workbench"
 		},
 		{
+			"name": "vs/workbench/contrib/lucos",
+			"project": "vscode-workbench"
+		},
+		{
 			"name": "vs/workbench/contrib/browserView",
 			"project": "vscode-workbench"
 		},

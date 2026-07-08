@@ -1,11 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — AI chat view pane (TW-159 + TW-172 error/auth states).
- *  Streaming conversation UI over the two seams (ILucosConversationService for state,
- *  ILucosDaemonService for transport). A banner reflects daemon connection; auth/quota task
- *  events surface as notifications with a Sign-In action. Unaffected when the stub is swapped
- *  for the real gRPC client (TW-161).
- *
- *  Remaining polish inside TW-159: markdown/code-block rendering (currently plain text).
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';
@@ -201,9 +196,17 @@ export class LucosChatViewPane extends ViewPane {
 						this.promptSignIn();
 						break;
 					case LucosTaskEventKind.AuthForbidden:
-					case LucosTaskEventKind.QuotaExceeded:
-						this.notificationService.notify({ severity: Severity.Warning, message: localize('lucos.auth.forbidden', "This action isn't available on your current Lucos plan.") });
+					case LucosTaskEventKind.QuotaExceeded: {
+						const payload = event.payload as { code?: string; message?: string };
+						const detail = payload.message ?? payload.code;
+						this.notificationService.notify({
+							severity: Severity.Warning,
+							message: detail
+								? localize('lucos.auth.forbidden.detail', "{0}", detail)
+								: localize('lucos.auth.forbidden', "This action isn't available on your current Lucos plan."),
+						});
 						break;
+					}
 					case LucosTaskEventKind.PatchProposed: {
 						const payload = event.payload as { patchId?: string; patch_id?: string };
 						const patchId = payload.patchId ?? payload.patch_id;
