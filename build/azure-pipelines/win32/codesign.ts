@@ -6,36 +6,56 @@
 import { $, usePwsh } from 'zx';
 import { printBanner, spawnCodesignProcess, streamProcessOutputAndCheckResult } from '../common/codesign.ts';
 import { e } from '../common/publish.ts';
+import { signDirectory } from '../../lib/signWindows.ts';
 
 async function main() {
 	usePwsh();
 
 	const arch = e('VSCODE_ARCH');
-	const esrpCliDLLPath = e('EsrpCliDllPath');
 	const codeSigningFolderPath = e('CodeSigningFolderPath');
 
-	// Start the code sign processes in parallel
-	// 1. Codesign executables and shared libraries
-	// 2. Codesign Powershell scripts
-	// 3. Codesign context menu appx package (insiders only)
-	const codesignTask1 = spawnCodesignProcess(esrpCliDLLPath, 'sign-windows', codeSigningFolderPath, '*.dll,*.exe,*.node');
-	const codesignTask2 = spawnCodesignProcess(esrpCliDLLPath, 'sign-windows-appx', codeSigningFolderPath, '*.ps1,*.psm1,*.psd1,*.ps1xml');
-	const codesignTask3 = process.env['VSCODE_QUALITY'] !== 'exploration'
-		? spawnCodesignProcess(esrpCliDLLPath, 'sign-windows-appx', codeSigningFolderPath, '*.appx')
-		: undefined;
+	// Determine signing mode.
+	// - ESRP (Microsoft internal): EsrpCliDllPath env var is present.
+	// - Lucos (fork / external CI): WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD env vars are present.
+	const useEsrp = !!process.env['EsrpCliDllPath'];
+	const useLucos = !useEsrp && !!(process.env['WINDOWS_PFX_DATA'] && process.env['WINDOWS_PFX_PASSWORD']);
 
-	// Codesign executables and shared libraries
-	printBanner('Codesign executables and shared libraries');
-	await streamProcessOutputAndCheckResult('Codesign executables and shared libraries', codesignTask1);
+	if (!useEsrp && !useLucos) {
+		throw new Error(
+			'No signing credentials found. Set either EsrpCliDllPath (ESRP) or ' +
+			'WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD (Lucos Authenticode).'
+		);
+	}
 
-	// Codesign Powershell scripts
-	printBanner('Codesign Powershell scripts');
-	await streamProcessOutputAndCheckResult('Codesign Powershell scripts', codesignTask2);
+	if (useEsrp) {
+		const esrpCliDLLPath = e('EsrpCliDllPath');
 
-	if (codesignTask3) {
-		// Codesign context menu appx package
-		printBanner('Codesign context menu appx package');
-		await streamProcessOutputAndCheckResult('Codesign context menu appx package', codesignTask3);
+		// Start the ESRP code-sign processes in parallel:
+		// 1. Executables and shared libraries (covers lucos-daemon.exe via *.exe glob)
+		// 2. PowerShell scripts
+		// 3. Context menu appx package (non-exploration quality only)
+		const codesignTask1 = spawnCodesignProcess(esrpCliDLLPath, 'sign-windows', codeSigningFolderPath, '*.dll,*.exe,*.node');
+		const codesignTask2 = spawnCodesignProcess(esrpCliDLLPath, 'sign-windows-appx', codeSigningFolderPath, '*.ps1,*.psm1,*.psd1,*.ps1xml');
+		const codesignTask3 = process.env['VSCODE_QUALITY'] !== 'exploration'
+			? spawnCodesignProcess(esrpCliDLLPath, 'sign-windows-appx', codeSigningFolderPath, '*.appx')
+			: undefined;
+
+		printBanner('Codesign executables and shared libraries (ESRP)');
+		await streamProcessOutputAndCheckResult('Codesign executables and shared libraries', codesignTask1);
+
+		printBanner('Codesign Powershell scripts (ESRP)');
+		await streamProcessOutputAndCheckResult('Codesign Powershell scripts', codesignTask2);
+
+		if (codesignTask3) {
+			printBanner('Codesign context menu appx package (ESRP)');
+			await streamProcessOutputAndCheckResult('Codesign context menu appx package', codesignTask3);
+		}
+	} else {
+		// Lucos Authenticode path: sign all .exe files (Electron binary +
+		// lucos-daemon.exe + inno_updater.exe) using signtool.exe with the
+		// certificate stored in CI secrets.
+		printBanner('Codesign executables (Lucos / signtool)');
+		await signDirectory(codeSigningFolderPath);
 	}
 
 	// Create build artifact directory
@@ -67,8 +87,9 @@ async function main() {
 
 	// Sign setup
 	if (process.env['BUILT_CLIENT']) {
-		printBanner('Sign setup packages (system, user)');
-		const task = $`npm exec -- npm-run-all2 -lp "gulp vscode-win32-${arch}-system-setup -- --sign" "gulp vscode-win32-${arch}-user-setup -- --sign"`;
+		const signFlag = useEsrp ? '--sign' : '--sign-lucos';
+		printBanner(`Sign setup packages (system, user) [${useEsrp ? 'ESRP' : 'Lucos'}]`);
+		const task = $`npm exec -- npm-run-all2 -lp "gulp vscode-win32-${arch}-system-setup -- ${signFlag}" "gulp vscode-win32-${arch}-user-setup -- ${signFlag}"`;
 		await streamProcessOutputAndCheckResult('Sign setup packages (system, user)', task);
 	}
 }

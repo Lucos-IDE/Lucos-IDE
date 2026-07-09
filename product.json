@@ -1,8 +1,9 @@
 {
-	"nameShort": "Code - OSS",
-	"nameLong": "Code - OSS",
+	"nameShort": "Lucos",
+	"nameLong": "Lucos",
 	"applicationName": "code-oss",
 	"dataFolderName": ".vscode-oss",
+	"updateUrl": "https://update.lucos.app",
 	"sharedDataFolderName": ".vscode-oss-shared",
 	"win32MutexName": "vscodeoss",
 	"licenseName": "MIT",

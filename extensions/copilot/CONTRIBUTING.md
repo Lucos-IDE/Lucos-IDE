@@ -352,8 +352,8 @@ For example:
 ```ts
 Object.assign(product, {
 		version: '1.102.0-dev',
-		nameShort: 'Code - OSS Dev',
-		nameLong: 'Code - OSS Dev',
+		nameShort: 'Lucos Dev',
+		nameLong: 'Lucos Dev',
 		applicationName: 'code-oss',
 		dataFolderName: '.vscode-oss',
 		urlProtocol: 'code-oss',
