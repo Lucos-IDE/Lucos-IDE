@@ -36,6 +36,7 @@ import globCallback from 'glob';
 import rceditCallback from 'rcedit';
 import { spawnTsgo } from './lib/tsgo.ts';
 import { runEsbuildTranspile, runEsbuildBundle } from './lib/esbuild.ts';
+import { getDaemonStream } from './lib/daemon.ts';
 
 
 const glob = promisify(globCallback);
@@ -422,6 +423,12 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 			const policyDest = gulp.src('.build/policies/darwin/**', { base: '.build/policies/darwin' })
 				.pipe(rename(f => f.dirname = `policies/${f.dirname}`));
 			all = es.merge(all, shortcut, policyDest);
+		}
+
+		// Bundle Lucos daemon binary into app resources.
+		const daemonStream = getDaemonStream(platform, arch === 'armhf' ? 'arm' : arch);
+		if (daemonStream) {
+			all = es.merge(all, daemonStream);
 		}
 
 		const electronConfig = {

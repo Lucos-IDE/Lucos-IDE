@@ -1170,6 +1170,7 @@ export class GettingStartedPage extends EditorPane {
 				contextService: this.contextService
 			});
 
+
 		startList.setEntries(parsedStartEntries);
 		startList.onDidChange(() => this.registerDispatchListeners());
 		return startList;
