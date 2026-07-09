@@ -39,6 +39,7 @@ service LucosDaemon {
   rpc ApplyPatch(ApplyPatchRequest) returns (ApplyPatchResponse);
   rpc RejectPatch(RejectPatchRequest) returns (RejectPatchResponse);
   rpc ListCustomizations(ListCustomizationsRequest) returns (CustomizationsSnapshot);
+  rpc IndexWorkspace(IndexWorkspaceRequest) returns (stream TaskEvent);
 }
 
 message HealthRequest {}
@@ -179,6 +180,13 @@ message CustomizationsSnapshot {
   repeated RepoRuleEntry repo_rules = 4;
   google.protobuf.Timestamp scanned_at = 5;
 }
+
+message IndexWorkspaceRequest {
+  string workspace_root = 1;
+  string workspace_id = 2;
+  bool force_rescan = 3;
+  repeated string ignore_patterns = 4;
+}
 `;
 
 const TIMESTAMP_PROTO = `
@@ -267,6 +275,13 @@ export class LucosGrpcClient extends Disposable {
 			throw new Error('Lucos daemon not connected');
 		}
 		return this.client.startAgentTask(request, this.metadata());
+	}
+
+	indexWorkspace(request: Record<string, unknown>): grpc.ClientReadableStream<Record<string, unknown>> {
+		if (!this.client) {
+			throw new Error('Lucos daemon not connected');
+		}
+		return this.client.indexWorkspace(request, this.metadata());
 	}
 
 	close(): void {

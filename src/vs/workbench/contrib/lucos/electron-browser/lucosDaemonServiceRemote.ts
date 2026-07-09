@@ -11,7 +11,7 @@ import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.j
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { ILucosDaemonNodeService } from '../../../../platform/lucos/common/lucosDaemonNode.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
-import { ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
 
 export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemonService {
 
@@ -79,10 +79,19 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 	}
 
 	startAgentTask(request: IStartAgentTaskRequest, token: CancellationToken): AsyncIterable<ITaskEvent> {
+		return this.consumeStream(() => this.nodeService.startAgentTask(request), token);
+	}
+
+	indexWorkspace(request: ILucosIndexWorkspaceRequest, token: CancellationToken): AsyncIterable<ITaskEvent> {
+		return this.consumeStream(() => this.nodeService.startIndexWorkspace(request), token);
+	}
+
+	// Shared wrapper: begin a server-stream (agent task or index), recombine the per-task channel
+	// events into the AsyncIterable the UI expects, and cancel the daemon stream on early return.
+	private consumeStream(begin: () => Promise<{ taskId: string }>, token: CancellationToken): AsyncIterable<ITaskEvent> {
 		let taskId: string | undefined;
 		const subscriptions = new DisposableStore();
 		const source = new AsyncIterableSource<ITaskEvent>(() => {
-			// Consumer stopped iterating early — cancel the daemon task and stop forwarding.
 			if (taskId) {
 				void this.nodeService.cancelAgentTask(taskId);
 			}
@@ -91,7 +100,7 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 
 		(async () => {
 			try {
-				const started = await this.nodeService.startAgentTask(request);
+				const started = await begin();
 				taskId = started.taskId;
 				if (token.isCancellationRequested) {
 					void this.nodeService.cancelAgentTask(taskId);

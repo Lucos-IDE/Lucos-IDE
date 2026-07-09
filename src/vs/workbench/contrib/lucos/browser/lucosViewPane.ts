@@ -16,6 +16,7 @@ import { IKeybindingService } from '../../../../platform/keybinding/common/keybi
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IViewPaneOptions, ViewPane } from '../../../browser/parts/views/viewPane.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { ILucosMessage, LucosMessageRole } from '../common/lucosConversation.js';
@@ -66,6 +67,7 @@ export class LucosChatViewPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ILucosDaemonService private readonly lucosDaemonService: ILucosDaemonService,
 		@ILucosConversationService private readonly conversationService: ILucosConversationService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILucosAuthService private readonly lucosAuthService: ILucosAuthService,
 		@ILucosChatRequestService private readonly chatRequestService: ILucosChatRequestService,
@@ -177,7 +179,9 @@ export class LucosChatViewPane extends ViewPane {
 		this.activeStream = cts;
 		this.setStreaming(true);
 
-		const request: IStartAgentTaskRequest = { goal, sessionId: this.conversationService.activeSession.id, context: contextOverride ?? this.buildContext(), selectedAgentPath };
+		// Always attach the workspace root so the daemon's file tools resolve paths (TW-161/220).
+		const workspaceRoot = this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
+		const request: IStartAgentTaskRequest = { goal, sessionId: this.conversationService.activeSession.id, context: { ...(contextOverride ?? this.buildContext()), workspaceRoot }, selectedAgentPath };
 		if (!contextOverride) {
 			this.clearContext();
 		}

@@ -22,6 +22,7 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { ILucosChatRequestService } from '../common/lucosChatRequestService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
+import { ILucosIndexService } from '../common/lucosIndexService.js';
 import { LUCOS_CHAT_VIEW_ID } from './lucosCommands.js';
 
 const LUCOS_CATEGORY = localize2('lucos', "Lucos");
@@ -170,5 +171,16 @@ export class LucosSelectCustomizationAction extends Action2 {
 			return;
 		}
 		await submitToChat(viewsService, chatRequestService, instruction, captureSelectionContext(editorService), choice.path);
+	}
+}
+
+export class LucosIndexWorkspaceAction extends Action2 {
+	static readonly ID = 'lucos.indexWorkspace';
+	constructor() {
+		super({ id: LucosIndexWorkspaceAction.ID, title: localize2('lucos.index.title', "Index Workspace"), category: LUCOS_CATEGORY, f1: true });
+	}
+	run(accessor: ServicesAccessor): Promise<void> {
+		// force=true: a manual "Index Workspace" invocation is an explicit full rescan.
+		return accessor.get(ILucosIndexService).index(true);
 	}
 }

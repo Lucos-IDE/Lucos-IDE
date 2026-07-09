@@ -8,7 +8,7 @@
 
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
-import { ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from './lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from './lucosProtocol.js';
 
 export const ipcLucosDaemonChannelName = 'lucosDaemon';
 
@@ -42,4 +42,7 @@ export interface ILucosDaemonNodeService {
 
 	/** Skills/agents discovered locally (TW-184). */
 	listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations>;
+
+	/** Begins indexing (TW-220); the stream reuses {@link onDynamicAgentTaskEvent}/{@link cancelAgentTask}. */
+	startIndexWorkspace(request: ILucosIndexWorkspaceRequest): Promise<{ taskId: string }>;
 }
