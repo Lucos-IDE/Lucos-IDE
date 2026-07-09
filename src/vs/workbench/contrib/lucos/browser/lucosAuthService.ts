@@ -111,7 +111,9 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			type: 'POST',
 			url: `${gatewayUrl}/api/v1/auth/authenticate`,
 			headers: { 'Content-Type': 'application/json' },
-			data: JSON.stringify({ email, password }),
+			// TW-198: the gateway expects a discriminated union keyed on authType,
+			// with `action` for the email flow — not a bare { email, password }.
+			data: JSON.stringify({ authType: 'email', action: 'sign-in', email, password }),
 			callSite: 'lucos.login',
 		}, CancellationToken.None);
 

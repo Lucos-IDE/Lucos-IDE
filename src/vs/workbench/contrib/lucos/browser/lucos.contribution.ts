@@ -26,14 +26,16 @@ import { LucosSettingId } from '../common/lucosConfiguration.js';
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosChatRequestService } from '../common/lucosChatRequestService.js';
+import { ILucosIndexService } from '../common/lucosIndexService.js';
 import { LUCOS_FOCUS_CHAT_COMMAND_ID, LUCOS_VIEW_CONTAINER_ID } from './lucosCommands.js';
 import { LucosConversationService } from './lucosConversationService.js';
 import { LucosChatRequestService } from './lucosChatRequestService.js';
 import { LucosAuthService } from './lucosAuthService.js';
+import { LucosIndexService } from './lucosIndexService.js';
 import { LucosChatViewPane } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
 import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction } from './lucosLoginActions.js';
-import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
+import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
 
 //#region Services
@@ -45,6 +47,8 @@ registerSingleton(ILucosConversationService, LucosConversationService, Instantia
 registerSingleton(ILucosAuthService, LucosAuthService, InstantiationType.Delayed);
 // Chat request seam (TW-163/167).
 registerSingleton(ILucosChatRequestService, LucosChatRequestService, InstantiationType.Delayed);
+// Workspace indexing state (TW-220/169/170).
+registerSingleton(ILucosIndexService, LucosIndexService, InstantiationType.Delayed);
 //#endregion
 
 //#region Settings (TW-168)
@@ -141,6 +145,7 @@ registerAction2(LucosRefactorAction);
 registerAction2(LucosGenerateTestsAction);
 registerAction2(LucosReviewChangesAction);
 registerAction2(LucosSelectCustomizationAction);
+registerAction2(LucosIndexWorkspaceAction);
 //#endregion
 
 //#region Notifications (TW-170)

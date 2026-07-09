@@ -12,13 +12,14 @@ import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILucosDaemonNodeService } from '../common/lucosDaemonNode.js';
-import { ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../common/lucosProtocol.js';
 import { ILucosDaemonEndpoint, LucosGrpcClient } from './lucosGrpcClient.js';
 
 const HEALTH_POLL_MS = 15_000;
 
 interface ITaskEntry {
 	readonly emitter: Emitter<ITaskEvent>;
+	readonly start: () => grpc.ClientReadableStream<Record<string, unknown>>;
 	stream: grpc.ClientReadableStream<Record<string, unknown>> | undefined;
 }
 
@@ -111,7 +112,6 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 	}
 
 	async startAgentTask(request: IStartAgentTaskRequest): Promise<{ taskId: string }> {
-		const taskId = generateUuid();
 		const grpcRequest: Record<string, unknown> = {
 			goal: request.goal,
 			sessionId: request.sessionId,
@@ -121,14 +121,29 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 			activeFile: request.context?.activeFile ?? '',
 			selection: request.context?.selection ?? '',
 			openBuffers: request.context?.openBuffers ?? [],
-			workspaceRoot: '',
+			workspaceRoot: request.context?.workspaceRoot ?? '',
 			selectedAgentPath: request.selectedAgentPath ?? '',
 		};
-		// Start the gRPC stream lazily, only once the renderer subscribes to the per-task event,
-		// so no events are dropped in the gap between startAgentTask() and onDynamicAgentTaskEvent().
-		const emitter = new Emitter<ITaskEvent>({ onWillAddFirstListener: () => this.beginStream(taskId, grpcRequest) });
-		this.tasks.set(taskId, { emitter, stream: undefined });
-		return { taskId };
+		return { taskId: this.beginTask(() => this.client.startAgentTask(grpcRequest)) };
+	}
+
+	async startIndexWorkspace(request: ILucosIndexWorkspaceRequest): Promise<{ taskId: string }> {
+		const grpcRequest: Record<string, unknown> = {
+			workspaceRoot: request.workspaceRoot,
+			workspaceId: request.workspaceId ?? '',
+			forceRescan: !!request.forceRescan,
+			ignorePatterns: request.ignorePatterns ?? [],
+		};
+		return { taskId: this.beginTask(() => this.client.indexWorkspace(grpcRequest)) };
+	}
+
+	// Register a streaming task; start the gRPC stream lazily on first subscription so no events
+	// are dropped between start…() and onDynamicAgentTaskEvent().
+	private beginTask(start: () => grpc.ClientReadableStream<Record<string, unknown>>): string {
+		const taskId = generateUuid();
+		const emitter = new Emitter<ITaskEvent>({ onWillAddFirstListener: () => this.beginStream(taskId) });
+		this.tasks.set(taskId, { emitter, start, stream: undefined });
+		return taskId;
 	}
 
 	async cancelAgentTask(taskId: string): Promise<void> {
@@ -141,14 +156,14 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		return this.tasks.get(taskId)?.emitter.event ?? Event.None;
 	}
 
-	private beginStream(taskId: string, grpcRequest: Record<string, unknown>): void {
+	private beginStream(taskId: string): void {
 		const entry = this.tasks.get(taskId);
 		if (!entry) {
 			return;
 		}
 		let stream: grpc.ClientReadableStream<Record<string, unknown>>;
 		try {
-			stream = this.client.startAgentTask(grpcRequest);
+			stream = entry.start();
 		} catch (error) {
 			entry.emitter.fire(errorEvent(taskId, error));
 			this.cleanupTask(taskId);

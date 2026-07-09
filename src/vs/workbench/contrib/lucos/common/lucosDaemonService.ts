@@ -5,7 +5,7 @@
 import { Event } from '../../../../base/common/event.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import { ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
 
 export const ILucosDaemonService = createDecorator<ILucosDaemonService>('lucosDaemonService');
 
@@ -57,4 +57,7 @@ export interface ILucosDaemonService {
 
 	/** List skills/agents the daemon discovered in the workspace (TW-184). */
 	listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations>;
+
+	/** (Re)index the workspace (TW-220). Streams `index.*` TaskEvents; cancel via `token`. */
+	indexWorkspace(request: ILucosIndexWorkspaceRequest, token: CancellationToken): AsyncIterable<ITaskEvent>;
 }

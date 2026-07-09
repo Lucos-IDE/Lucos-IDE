@@ -56,6 +56,8 @@ export interface ILucosCloudCredentials {
 /** Visible editor context captured by the IDE and sent with a task (`StartAgentTaskRequest`). */
 export interface ILucosWorkspaceContext {
 	readonly workspaceId?: string;
+	/** Absolute path of the active workspace root — required by the daemon's file tools (TW-161). */
+	readonly workspaceRoot?: string;
 	readonly activeFile?: string;
 	readonly selection?: string;
 	readonly openBuffers?: readonly string[];
@@ -94,6 +96,14 @@ export const enum LucosTaskEventKind {
 	AuthExpired = 'auth.expired',
 	AuthForbidden = 'auth.forbidden',
 	QuotaExceeded = 'quota.exceeded',
+	// Index lifecycle (TW-220) — streamed from IndexWorkspace.
+	IndexStarted = 'index.started',
+	IndexProgress = 'index.progress',
+	IndexUploadStarted = 'index.upload.started',
+	IndexUploadProgress = 'index.upload.progress',
+	IndexCloudStatus = 'index.cloud.status',
+	IndexCompleted = 'index.completed',
+	IndexFailed = 'index.failed',
 	Error = 'error',
 }
 
@@ -158,4 +168,29 @@ export interface ILucosAgent {
 export interface ILucosCustomizations {
 	readonly skills: readonly ILucosSkill[];
 	readonly agents: readonly ILucosAgent[];
+}
+
+/** Request to (re)index a workspace — `IndexWorkspaceRequest` (TW-220). */
+export interface ILucosIndexWorkspaceRequest {
+	readonly workspaceRoot: string;
+	readonly workspaceId?: string;
+	readonly forceRescan?: boolean;
+	readonly ignorePatterns?: readonly string[];
+}
+
+/** IDE-facing indexing state derived from the `index.*` event stream (TW-169). */
+export const enum LucosIndexState {
+	Idle = 'idle',
+	Indexing = 'indexing',
+	Indexed = 'indexed',
+	Stale = 'stale',
+	Failed = 'failed',
+}
+
+export interface ILucosIndexStatus {
+	readonly state: LucosIndexState;
+	readonly filesIndexed?: number;
+	readonly chunksTotal?: number;
+	readonly staleCount?: number;
+	readonly message?: string;
 }

@@ -49,7 +49,8 @@ src/vs/workbench/contrib/lucos/                ← the UI
 │   ├── lucosConversation.ts                   message/session model
 │   ├── lucosConversationService.ts            conversation store interface
 │   ├── lucosAuthService.ts                    auth service interface
-│   └── lucosChatRequestService.ts             "submit to chat" seam (Cmd+K / palette → view)
+│   ├── lucosChatRequestService.ts             "submit to chat" seam (Cmd+K / palette → view)
+│   └── lucosIndexService.ts                   ILucosIndexService (workspace index state seam)
 ├── browser/
 │   ├── lucos.contribution.ts                  main registration hub (services, settings, view, actions)
 │   ├── lucos.stub.contribution.ts             web: bind stub daemon
@@ -64,7 +65,8 @@ src/vs/workbench/contrib/lucos/                ← the UI
 │   ├── lucosContextPicker.ts                  @selection / @file / @workspace capture
 │   ├── lucosPatchReview.ts                    patch review card + native diff + accept/reject
 │   ├── lucosChatRequestService.ts             submit-to-chat impl
-│   ├── lucosEditorActions.ts                  Cmd+K + palette (Explain/Refactor/Tests/Review) + skill/agent picker
+│   ├── lucosIndexService.ts                   folds daemon index.* events → status + completion/failure notifications
+│   ├── lucosEditorActions.ts                  Cmd+K + palette (Explain/Refactor/Tests/Review) + skill/agent + Index Workspace
 │   └── lucosNotifications.ts                  global offline notification (debounced)
 ├── electron-browser/
 │   ├── lucos.contribution.ts                  desktop: bind real gRPC-backed daemon service
@@ -87,7 +89,7 @@ src/vs/workbench/contrib/lucos/                ← the UI
 | **TW-158** Activity Bar | `lucos.contribution.ts` (view container + focus command), `lucosViewPane.ts`, `lucosCommands.ts` |
 | **TW-159** AI Chat | `lucosViewPane.ts` (streaming, composer, cancel) |
 | **TW-160** Conversation Store | `common/lucosConversation.ts`, `common/lucosConversationService.ts`, `browser/lucosConversationService.ts` |
-| **TW-161** gRPC Client | `platform/lucos/**`, `electron-browser/lucosDaemonServiceRemote.ts`, `electron-browser/lucos.contribution.ts`, `browser/lucos.stub.contribution.ts`, `app.ts`, mains, `package.json` |
+| **TW-161** gRPC Client | `platform/lucos/**`, `electron-browser/lucosDaemonServiceRemote.ts`, `electron-browser/lucos.contribution.ts`, `browser/lucos.stub.contribution.ts`, `app.ts`, mains, `package.json`. **`StartAgentTask` now sends `workspace_root`** (from `IWorkspaceContextService`, via `ILucosWorkspaceContext.workspaceRoot`) — required by daemon file tools |
 | **TW-162** Activity Timeline | `lucosActivityTimeline.ts` |
 | **TW-163** Cmd+K | `lucosEditorActions.ts` (`LucosCmdKAction`), `lucosChatRequestService.ts` |
 | **TW-164** @mentions | `lucosContextPicker.ts`, `lucosViewPane.ts` (chips + threading) |
@@ -95,9 +97,10 @@ src/vs/workbench/contrib/lucos/                ← the UI
 | **TW-166** Apply/Reject | `lucosPatchReview.ts` (accept→`applyPatch`, reject→`rejectPatch`) |
 | **TW-167** Command Palette | `lucosEditorActions.ts` (Explain / Refactor / Generate Tests / Review Changes) |
 | **TW-168** Settings | `lucos.contribution.ts` (`registerConfiguration`), `common/lucosConfiguration.ts` |
-| **TW-169** Status Bar | `lucosStatusBar.ts` |
-| **TW-170** Notifications | `lucosNotifications.ts` |
-| **TW-172** Error Handling | `lucosViewPane.ts` (offline banner + auth/quota events) |
+| **TW-169** Status Bar | `lucosStatusBar.ts` (connection + model + index state) |
+| **TW-170** Notifications | `lucosNotifications.ts` (offline) + `lucosIndexService.ts` (index complete/failure) |
+| **TW-172** Error Handling | `lucosViewPane.ts` (offline banner + auth/quota events), `lucosIndexService.ts` (`index.failed`) |
+| **TW-220** Index Workspace | `common/lucosIndexService.ts`, `browser/lucosIndexService.ts`, `lucosEditorActions.ts` (`LucosIndexWorkspaceAction`), `indexWorkspace` across all daemon layers (`lucosProtocol.ts`, `lucosGrpcClient.ts`, `lucosDaemonNode.ts`, `lucosDaemonNodeService.ts`, `lucosDaemonServiceRemote.ts`, `lucosDaemonServiceStub.ts`, `lucosDaemonService.ts`) |
 | **TW-173** UI Performance | `lucosViewPane.ts` (rAF-batched streaming updates) |
 | **TW-174** Testing | `test/browser/lucosDaemonServiceStub.test.ts` |
 | **TW-184** Customizations | `lucosEditorActions.ts` (`LucosSelectCustomizationAction`) + `listCustomizations` across daemon layers |
@@ -107,31 +110,44 @@ src/vs/workbench/contrib/lucos/                ← the UI
 
 ## Daemon contract (proto `lucos.v1.LucosDaemon`)
 
-Consumed via `ILucosDaemonService`. Auth RPCs (TW-190/191/192) are **done** on the daemon side.
+Consumed via `ILucosDaemonService`. All 12 RPCs are **implemented** on the daemon side (teammate
+confirmed the local-daemon blockers are cleared).
 
 | RPC | Used by | Daemon status |
 |-----|---------|---------------|
 | `Health` | status bar, connection polling | ✅ implemented |
 | `GetAuthStatus` / `SetCloudCredentials` / `ClearCloudCredentials` | login, status | ✅ implemented |
-| `StartAgentTask` (server-stream) | chat, timeline | 🟡 skeleton (real agent loop pending) |
-| `GetPendingPatch` / `ApplyPatch` / `RejectPatch` | diff review | ⬜ in proto; verify daemon impl |
-| `ListCustomizations` | skill/agent picker | ⬜ in proto; verify daemon impl |
+| `StartAgentTask` (server-stream) | chat, timeline | ✅ implemented (real agent loop) |
+| `GetPendingPatch` / `ApplyPatch` / `RejectPatch` | diff review | ✅ implemented |
+| `ListCustomizations` | skill/agent picker | ✅ implemented |
+| `IndexWorkspace` (server-stream) | index service, status bar, command | ✅ implemented |
 
-Task-event kinds the UI renders: `task.started`, `model.delta`, `tool.started/completed`,
+Agent task-event kinds the UI renders: `task.started`, `model.delta`, `tool.started/completed`,
 `patch.proposed`, `task.completed`, `auth.required/expired/forbidden`, `quota.exceeded`, `error`.
+
+Index task-event kinds (from `IndexWorkspace`, folded by `ILucosIndexService`): `index.started`,
+`index.progress`, `index.upload.started`, `index.upload.progress`, `index.cloud.status`,
+`index.completed` (carries `status` + optional `cloud_state`), `index.failed` (`code` + `message`).
 
 ---
 
 ## Runtime-validation checklist
 
 Everything below is typecheck-verified but **not runtime-tested**. Once the native build is fixed
-(TW-155) and a daemon is running (`opencode`/`lucos-daemon` in dev mode), verify:
+(TW-155) and the daemon is running (`make dev` in `local-daemon`), verify:
+
+**Local dev pre-reqs**
+- Start the daemon: `make dev` — it writes `~/.lucos/daemon.json` (`grpc_port`, `local_session_token`).
+- Point sign-in at the local gateway (TW-168): set `lucos.cloud.gatewayUrl` to `http://localhost:3007`
+  (the setting defaults to the prod `https://api.lucos.com`; the daemon's own `LUCOS_GATEWAY_URL`
+  is set via `local-daemon/.env`).
 
 - [ ] Fork builds & launches (`npm install` succeeds, `./scripts/code.sh` opens) — **blocked on TW-155 (native modules)**
 - [ ] Lucos icon appears in the Activity Bar; `Ctrl/Cmd+Shift+A` focuses the chat view
 - [ ] Settings show under "Lucos AI"; changing the model updates the status bar
 - [ ] Status bar shows Connected + model when the daemon is up; Offline when it's down
-- [ ] Sign in → JWT lands in OS keychain → daemon `SetCloudCredentials` → status flips to authenticated
+- [ ] Sign in (TW-198) → gateway `POST /api/v1/auth/authenticate` with `{authType:'email', action:'sign-in', …}`
+      returns a token → JWT lands in OS keychain → daemon `SetCloudCredentials` → status flips to authenticated
 - [ ] Restart the IDE → session auto-restores from the keychain
 - [ ] Chat: type → task streams tokens; Stop cancels; timeline shows tool activity
 - [ ] `@selection` / `@file` / `@workspace` attach chips and reach the task request
@@ -139,7 +155,14 @@ Everything below is typecheck-verified but **not runtime-tested**. Once the nati
 - [ ] Accept → daemon `ApplyPatch` writes files; Reject → `RejectPatch` discards
 - [ ] Cmd+K on a selection → prompt → edit task → patch review
 - [ ] Palette: Explain / Refactor / Generate Tests / Review Changes start the right task
-- [ ] "AI: Run Skill or Agent" lists customizations and runs the chosen one
+- [ ] "AI: Run Skill or Agent" lists customizations and runs the chosen one (TW-184)
+- [ ] **Index (TW-220/169/170):** run "Lucos: Index Workspace" → request carries `workspaceId` +
+      `ignore_patterns` (from `lucos.context.ignorePatterns`) → status bar shows `$(sync~spin) indexing…`
+      → on completion flips to `· indexed` (or `· index stale (N)`) and an info notification fires
+- [ ] **Index while offline (TW-220 AC):** with the daemon down, "Lucos: Index Workspace" shows a clear
+      "daemon is offline" warning instead of failing mid-stream
+- [ ] **Index failure (TW-172):** trigger a failure (e.g. sign out / no entitlement) → status bar shows
+      `· index failed`, tooltip carries the message, and an error notification fires
 - [ ] Kill the daemon mid-session → offline banner + debounced offline notification; restart → reconnects
 - [ ] `npm run test-node --grep LucosDaemonServiceStub` passes
 

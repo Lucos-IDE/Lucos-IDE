@@ -43,4 +43,17 @@ suite('LucosDaemonServiceStub', () => {
 		assert.strictEqual(kinds[kinds.length - 1], LucosTaskEventKind.TaskCompleted);
 		assert.ok(kinds.includes(LucosTaskEventKind.ModelDelta), 'expected at least one model.delta event');
 	});
+
+	test('indexWorkspace streams start, progress and completion', async () => {
+		const service = disposables.add(new LucosDaemonServiceStub());
+		const kinds: string[] = [];
+
+		for await (const event of service.indexWorkspace({ workspaceRoot: '/repo' }, CancellationToken.None)) {
+			kinds.push(event.kind);
+		}
+
+		assert.strictEqual(kinds[0], LucosTaskEventKind.IndexStarted);
+		assert.strictEqual(kinds[kinds.length - 1], LucosTaskEventKind.IndexCompleted);
+		assert.ok(kinds.includes(LucosTaskEventKind.IndexProgress), 'expected at least one index.progress event');
+	});
 });

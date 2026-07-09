@@ -13,7 +13,7 @@ import { timeout } from '../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
-import { ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
 
 export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonService {
 
@@ -87,6 +87,22 @@ export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonSe
 		}
 
 		yield emit(LucosTaskEventKind.TaskCompleted, { summary: 'Stub task complete.' });
+	}
+
+	async *indexWorkspace(request: ILucosIndexWorkspaceRequest, token: CancellationToken): AsyncIterable<ITaskEvent> {
+		let sequence = 0;
+		const emit = (kind: LucosTaskEventKind, payload: unknown): ITaskEvent =>
+			({ taskId: 'stub-index', kind, sequence: ++sequence, timestamp: Date.now(), severity: 'info', payload });
+
+		yield emit(LucosTaskEventKind.IndexStarted, { workspace_root: request.workspaceRoot });
+		for (let i = 1; i <= 3; i++) {
+			if (token.isCancellationRequested) {
+				return;
+			}
+			await timeout(150);
+			yield emit(LucosTaskEventKind.IndexProgress, { files_indexed: i * 4, chunks_total: i * 20 });
+		}
+		yield emit(LucosTaskEventKind.IndexCompleted, { files_indexed: 12, chunks_total: 60, stale_count: 0, status: 'local_index_ready' });
 	}
 
 	private _setAuthStatus(status: ILucosAuthStatus): void {
