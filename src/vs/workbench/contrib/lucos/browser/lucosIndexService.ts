@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// Lucos IDE — workspace indexing (TW-220 / TW-169 / TW-170 / TW-172).
+// Lucos IDE - workspace indexing (TW-220 / TW-169 / TW-170 / TW-172).
 // Drives the daemon's IndexWorkspace stream, folds the `index.*` TaskEvents into a single
-// ILucosIndexStatus (idle → indexing → indexed/stale/failed), and surfaces completion/failure
+// ILucosIndexStatus (idle -> indexing -> indexed/stale/failed), and surfaces completion/failure
 // as notifications. The status bar reads `status`/`onDidChangeStatus`; the command calls `index()`.
 
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
@@ -30,7 +30,7 @@ export class LucosIndexService extends Disposable implements ILucosIndexService 
 	private _status: ILucosIndexStatus = { state: LucosIndexState.Idle };
 	get status(): ILucosIndexStatus { return this._status; }
 
-	/** Non-undefined while an index run is in flight — also our single-flight guard. */
+	/** Non-undefined while an index run is in flight - also our single-flight guard. */
 	private activeRun: CancellationTokenSource | undefined;
 
 	constructor(
@@ -45,10 +45,10 @@ export class LucosIndexService extends Disposable implements ILucosIndexService 
 
 	async index(force = false): Promise<void> {
 		if (this.activeRun) {
-			return; // already indexing — ignore re-entrancy
+			return; // already indexing - ignore re-entrancy
 		}
 		if (this.daemonService.connectionState !== LucosConnectionState.Connected) {
-			this.notificationService.warn(localize('lucos.index.offline', "Lucos daemon is offline — connect before indexing the workspace."));
+			this.notificationService.warn(localize('lucos.index.offline', "Lucos daemon is offline - connect before indexing the workspace."));
 			return;
 		}
 		const workspace = this.workspaceContextService.getWorkspace();
@@ -72,7 +72,7 @@ export class LucosIndexService extends Disposable implements ILucosIndexService 
 			for await (const event of this.daemonService.indexWorkspace(request, cts.token)) {
 				this.handleEvent(event);
 			}
-			// Stream ended without an explicit completed/failed event — assume success.
+			// Stream ended without an explicit completed/failed event - assume success.
 			if (this._status.state === LucosIndexState.Indexing) {
 				this.setStatus({ state: LucosIndexState.Indexed, filesIndexed: this._status.filesIndexed, chunksTotal: this._status.chunksTotal });
 			}

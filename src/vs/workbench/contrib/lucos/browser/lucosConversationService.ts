@@ -1,7 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — conversation store implementation (TW-160).
- *  In-memory sessions with lightweight workspace-scoped persistence of the active session so
- *  chat history survives IDE restarts.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../base/common/event.js';

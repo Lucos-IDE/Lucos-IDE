@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — conversation store service (TW-160).
- *  Owns sessions, messages and streaming state. Pure client-side state; the chat view (TW-159)
- *  and timeline (TW-162) render from it. Kept separate from ILucosDaemonService so UI state and
- *  transport evolve independently.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';

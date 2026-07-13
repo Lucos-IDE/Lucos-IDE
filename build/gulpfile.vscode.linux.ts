@@ -14,6 +14,7 @@ import product from '../product.json' with { type: 'json' };
 import { getDependencies } from './linux/dependencies-generator.ts';
 import { recommendedDeps as debianRecommendedDependencies } from './linux/debian/dep-lists.ts';
 import { recommendedDeps as rpmRecommendedDependencies } from './linux/rpm/dep-lists.ts';
+import { buildAppImage } from './linux/appimage.ts';
 import * as path from 'path';
 import * as cp from 'child_process';
 import { promisify } from 'util';
@@ -34,7 +35,7 @@ function getDebPackageArch(arch: string): string {
 }
 
 function prepareDebPackage(arch: string) {
-	const binaryDir = '../VSCode-linux-' + arch;
+	const binaryDir = '../Lucos-linux-' + arch;
 	const debArch = getDebPackageArch(arch);
 	const destination = '.build/linux/deb/' + debArch + '/' + product.applicationName + '-' + debArch;
 
@@ -144,7 +145,7 @@ function getRpmPackageArch(arch: string): string {
 }
 
 function prepareRpmPackage(arch: string) {
-	const binaryDir = '../VSCode-linux-' + arch;
+	const binaryDir = '../Lucos-linux-' + arch;
 	const rpmArch = getRpmPackageArch(arch);
 	const stripBinary = process.env['STRIP'] ?? '/usr/bin/strip';
 
@@ -232,7 +233,7 @@ function getSnapBuildPath(arch: string): string {
 }
 
 function prepareSnapPackage(arch: string) {
-	const binaryDir = '../VSCode-linux-' + arch;
+	const binaryDir = '../Lucos-linux-' + arch;
 	const destination = getSnapBuildPath(arch);
 
 	return function () {
@@ -303,4 +304,14 @@ BUILD_TARGETS.forEach(({ arch }) => {
 	task.task(prepareSnapTask);
 	const buildSnapTask = task.define(`vscode-linux-${arch}-build-snap`, task.series(prepareSnapTask, buildSnapPackage(arch)));
 	task.task(buildSnapTask);
+
+	// AppImage — available for x64 and arm64 only (not armhf).
+	if (arch !== 'armhf') {
+		const appImageOutDir = path.join(root, '.build', 'linux', 'appimage');
+		const buildAppImageTask = task.define(
+			`lucos-linux-${arch}-build-appimage`,
+			() => buildAppImage(arch, appImageOutDir)
+		);
+		task.task(buildAppImageTask);
+	}
 });

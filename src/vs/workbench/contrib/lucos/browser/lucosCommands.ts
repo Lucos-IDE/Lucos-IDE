@@ -1,7 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — shared command and container identifiers.
- *  Kept in a leaf module so multiple contributions can reference them without importing the
- *  entry-point contribution (avoids import cycles).
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 export const LUCOS_VIEW_CONTAINER_ID = 'workbench.view.lucos';

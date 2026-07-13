@@ -464,7 +464,7 @@ async function processLocalhostRequest(
 	const client = await sw.clients.get(event.clientId);
 	if (!client) {
 		// This is expected when requesting resources on other localhost ports
-		// that are not spawned by vs code
+		// that are not spawned by lucos
 		return fetch(event.request);
 	}
 	const webviewId = getWebviewIdForClient(client);

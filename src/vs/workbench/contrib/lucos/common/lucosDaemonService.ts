@@ -1,5 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — the single seam between the AI UI and the local Go daemon.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
@@ -12,7 +13,7 @@ export const ILucosDaemonService = createDecorator<ILucosDaemonService>('lucosDa
 /**
  * The one place the Lucos UI talks to the local daemon.
  *
- * Every UI ticket — chat (TW-159), timeline (TW-162), status bar (TW-169), login (TW-198) —
+ * Every UI ticket - chat (TW-159), timeline (TW-162), status bar (TW-169), login (TW-198) -
  * depends ONLY on this interface, never on gRPC directly. Today it is backed by
  * {@link LucosDaemonServiceStub} so the entire UI is runnable and demoable without the daemon.
  * TW-161 replaces the registered implementation with a real gRPC-over-IPC client (node process,
@@ -30,10 +31,10 @@ export interface ILucosDaemonService {
 	readonly authStatus: ILucosAuthStatus;
 	readonly onDidChangeAuthStatus: Event<ILucosAuthStatus>;
 
-	/** Daemon `Health` RPC — drives the status bar connection indicator (TW-169). */
+	/** Daemon `Health` RPC - drives the status bar connection indicator (TW-169). */
 	health(): Promise<ILucosHealth>;
 
-	//#region Auth RPCs — map to daemon SetCloudCredentials/ClearCloudCredentials/GetAuthStatus (TW-190, done)
+	//#region Auth RPCs - map to daemon SetCloudCredentials/ClearCloudCredentials/GetAuthStatus (TW-190, done)
 	getAuthStatus(): Promise<ILucosAuthStatus>;
 	setCloudCredentials(credentials: ILucosCloudCredentials): Promise<void>;
 	clearCloudCredentials(): Promise<void>;
@@ -46,7 +47,7 @@ export interface ILucosDaemonService {
 	 */
 	startAgentTask(request: IStartAgentTaskRequest, token: CancellationToken): AsyncIterable<ITaskEvent>;
 
-	//#region Patch flow (TW-165/166) — the daemon holds the pending patch and applies it on accept.
+	//#region Patch flow (TW-165/166) - the daemon holds the pending patch and applies it on accept.
 	/** Fetch a proposed patch by id (from a `patch.proposed` task event). */
 	getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined>;
 	/** Accept: the daemon applies the patch to the workspace (conflict-checked via base hashes). */

@@ -1,10 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — configuration keys (single source of truth for setting ids).
- *  Registered in lucos.contribution.ts; read by the daemon client (TW-161) and others.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 export const LucosSettingId = {
-	/** Manual override for the daemon gRPC address; empty ⇒ auto-discover from `~/.lucos/daemon.json`. */
+	/** Manual override for the daemon gRPC address; empty -> auto-discover from `~/.lucos/daemon.json`. */
 	AgentUrl: 'lucos.agent.url',
 	/** Default model for chat/edits; the available set is ultimately gated by the user's plan. */
 	AgentModel: 'lucos.agent.model',
@@ -14,6 +14,13 @@ export const LucosSettingId = {
 	ContextIgnorePatterns: 'lucos.context.ignorePatterns',
 	/** Base URL of the Lucos cloud gateway, used by the IDE for sign-in (TW-198). */
 	CloudGatewayUrl: 'lucos.cloud.gatewayUrl',
+	/**
+	 * Auth / feature mode (TW-178 / TW-197).
+	 * - `cloud`      (default) - full experience: sign in once, LLM + semantic search + cloud indexing.
+	 * - `local-only` - offline/air-gapped: daemon read/grep/git tools available; LLM + cloud features
+	 *                  are disabled and the user is never blocked by missing auth.
+	 */
+	AuthMode: 'lucos.auth.mode',
 } as const;
 
 export type LucosSettingId = typeof LucosSettingId[keyof typeof LucosSettingId];
@@ -25,4 +32,5 @@ export interface ILucosConfiguration {
 	readonly chatStreaming: boolean;
 	readonly contextIgnorePatterns: readonly string[];
 	readonly cloudGatewayUrl: string;
+	readonly authMode: 'cloud' | 'local-only';
 }

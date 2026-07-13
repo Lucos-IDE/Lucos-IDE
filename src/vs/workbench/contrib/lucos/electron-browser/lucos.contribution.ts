@@ -1,7 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — desktop (electron) daemon wiring (TW-161).
- *  Registers the renderer-side proxy of the main-process daemon service, and binds the UI-facing
- *  ILucosDaemonService to the real gRPC-backed remote. Loaded from workbench.desktop.main.ts.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
