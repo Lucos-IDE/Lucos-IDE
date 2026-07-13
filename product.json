@@ -4,6 +4,7 @@
 	"applicationName": "code-oss",
 	"dataFolderName": ".vscode-oss",
 	"updateUrl": "https://update.lucos.app",
+	"quality": "stable",
 	"sharedDataFolderName": ".vscode-oss-shared",
 	"win32MutexName": "vscodeoss",
 	"licenseName": "MIT",

@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — chat request seam (TW-163 / TW-167).
- *  Lets editor commands (Cmd+K, Explain/Refactor/…) hand a goal + context to the chat view
- *  without the commands depending on the view. The view subscribes and runs the task through
- *  the existing streaming + patch-review machinery.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';

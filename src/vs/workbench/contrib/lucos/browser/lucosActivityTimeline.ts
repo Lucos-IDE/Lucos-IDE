@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — activity timeline widget (TW-162).
- *  Renders the agent's live tool activity (Searching / Reading / Running tests …) from the task
- *  event stream. Consumes only ITaskEvent, so it lights up automatically once the daemon emits
- *  real tool events (today the stub emits none, so it stays hidden).
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';

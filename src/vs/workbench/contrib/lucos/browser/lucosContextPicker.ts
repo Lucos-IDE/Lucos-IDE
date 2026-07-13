@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — workspace context picker (TW-164).
- *  Captures @selection / @file / @workspace as structured context that threads into the
- *  StartAgentTaskRequest. Only paths/selection text cross the wire — the daemon reads file
- *  contents locally (it owns the workspace), so nothing large is uploaded from here.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { basename } from '../../../../base/common/resources.js';

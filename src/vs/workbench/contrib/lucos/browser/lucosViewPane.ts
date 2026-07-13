@@ -28,6 +28,7 @@ import { ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, L
 import { LucosActivityTimeline } from './lucosActivityTimeline.js';
 import { ILucosContextMention, LucosContextPicker } from './lucosContextPicker.js';
 import { LucosPatchReview } from './lucosPatchReview.js';
+import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 
 export class LucosChatViewPane extends ViewPane {
 
@@ -71,6 +72,7 @@ export class LucosChatViewPane extends ViewPane {
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILucosAuthService private readonly lucosAuthService: ILucosAuthService,
 		@ILucosChatRequestService private readonly chatRequestService: ILucosChatRequestService,
+		@ILucosAuthModeService private readonly lucosAuthModeService: ILucosAuthModeService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -88,7 +90,7 @@ export class LucosChatViewPane extends ViewPane {
 		container.style.flexDirection = 'column';
 		container.style.height = '100%';
 
-		// Banner (TW-172) — connection/auth states.
+		// Banner (TW-172) - connection/auth states.
 		this.bannerContainer = dom.append(container, dom.$('.lucos-chat-banner'));
 		this.bannerContainer.style.display = 'none';
 		this.bannerContainer.style.padding = '6px 8px';
@@ -147,8 +149,9 @@ export class LucosChatViewPane extends ViewPane {
 		}));
 		this._register(dom.addDisposableListener(this.sendButton, 'click', () => this.onSend()));
 
-		this._register(this.lucosDaemonService.onDidChangeConnectionState(() => this.updateConnectionBanner()));
-		this.updateConnectionBanner();
+		this._register(this.lucosDaemonService.onDidChangeConnectionState(() => this.updateBanner()));
+		this._register(this.lucosAuthModeService.onDidChangeMode(() => this.updateBanner()));
+		this.updateBanner();
 
 		for (const message of this.conversationService.activeSession.messages) {
 			this.renderMessage(message);
@@ -171,6 +174,9 @@ export class LucosChatViewPane extends ViewPane {
 	}
 
 	private async runTask(goal: string, contextOverride?: ILucosWorkspaceContext, selectedAgentPath?: string): Promise<void> {
+		if (!this.lucosAuthModeService.requireCloud(this.notificationService)) {
+			return;
+		}
 		this.timeline.clear();
 		this.conversationService.addMessage(LucosMessageRole.User, goal);
 		const assistant = this.conversationService.addMessage(LucosMessageRole.Assistant, '', true);
@@ -296,8 +302,15 @@ export class LucosChatViewPane extends ViewPane {
 		this.inputBox.disabled = streaming;
 	}
 
-	private updateConnectionBanner(): void {
-		if (this.lucosDaemonService.connectionState === LucosConnectionState.Disconnected) {
+	/** Single banner-update point - local-only takes precedence over connection state. */
+	private updateBanner(): void {
+		if (this.lucosAuthModeService.isLocalOnly) {
+			this.showBanner(
+				localize('lucos.banner.localOnly', "Local-only mode - sign in for AI assistance."),
+				localize('lucos.banner.signIn', "Sign In"),
+				() => void this.lucosAuthService.login(),
+			);
+		} else if (this.lucosDaemonService.connectionState === LucosConnectionState.Disconnected) {
 			this.showBanner(
 				localize('lucos.banner.offline', "Lucos agent is offline."),
 				localize('lucos.banner.retry', "Retry"),
@@ -308,6 +321,11 @@ export class LucosChatViewPane extends ViewPane {
 		}
 	}
 
+	/** @deprecated Use updateBanner() instead. */
+	private updateConnectionBanner(): void {
+		this.updateBanner();
+	}
+
 	private async retryConnection(): Promise<void> {
 		try {
 			const health = await this.lucosDaemonService.health();
@@ -315,7 +333,7 @@ export class LucosChatViewPane extends ViewPane {
 				this.updateConnectionBanner();
 			}
 		} catch {
-			// Still offline — leave the banner up.
+			// Still offline - leave the banner up.
 		}
 	}
 

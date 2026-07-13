@@ -1,5 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — chat request seam implementation (TW-163 / TW-167).
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../base/common/event.js';

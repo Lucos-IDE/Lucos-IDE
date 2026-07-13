@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — sign-in / sign-out commands + startup session restore (TW-198).
- *  Classes are registered from lucos.contribution.ts (the single registration hub).
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { localize2 } from '../../../../nls.js';

@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — global notifications (TW-170).
- *  Surfaces a debounced "agent offline" warning globally (the in-panel banner from TW-172 only
- *  shows when the chat view is open). Index/update/test notifications layer on here once the
- *  cloud index-status (TW-203) and release-server (TW-210) APIs exist.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { localize } from '../../../../nls.js';
@@ -39,7 +37,7 @@ export class LucosNotificationsContribution extends Disposable implements IWorkb
 		this.lastOfflineNotified = now;
 		this.notificationService.notify({
 			severity: Severity.Warning,
-			message: localize('lucos.notify.offline', "Lucos agent is offline — AI features are unavailable until it reconnects."),
+			message: localize('lucos.notify.offline', "Lucos agent is offline - AI features are unavailable until it reconnects."),
 		});
 	}
 }

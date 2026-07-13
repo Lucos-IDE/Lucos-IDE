@@ -1,13 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — AI workbench contribution (entry point).
- *
- *  Registers, in one place:
- *    • the daemon service seam (stub today — swap to the real gRPC client in TW-161),
- *    • settings (TW-168),
- *    • the AI Activity Bar view container + view and its focus command (TW-158).
- *
- *  Contribution-only: no VS Code core files are modified (satisfies the TW-154 fork-governance
- *  rule), except the single import line added to workbench.common.main.ts that loads this file.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { localize, localize2 } from '../../../../nls.js';
@@ -37,10 +30,14 @@ import { LucosStatusBarContribution } from './lucosStatusBar.js';
 import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
+import { LucosFirstRunContribution } from './lucosFirstRunContribution.js';
+import { LucosWorkspaceIndexWatcher } from './lucosWorkspaceIndexWatcher.js';
+import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
+import { LucosAuthModeService } from './lucosAuthModeService.js';
 
 //#region Services
-// The daemon service is bound per-platform: desktop → real gRPC client
-// (electron-browser/lucos.contribution.ts); web → stub (browser/lucos.stub.contribution.ts).
+// The daemon service is bound per-platform: desktop -> real gRPC client
+// (electron-browser/lucos.contribution.ts); web -> stub (browser/lucos.stub.contribution.ts).
 // Conversation store (TW-160).
 registerSingleton(ILucosConversationService, LucosConversationService, InstantiationType.Delayed);
 // Auth orchestration (TW-198).
@@ -49,6 +46,8 @@ registerSingleton(ILucosAuthService, LucosAuthService, InstantiationType.Delayed
 registerSingleton(ILucosChatRequestService, LucosChatRequestService, InstantiationType.Delayed);
 // Workspace indexing state (TW-220/169/170).
 registerSingleton(ILucosIndexService, LucosIndexService, InstantiationType.Delayed);
+// Auth mode / cloud feature-gating (TW-178/197).
+registerSingleton(ILucosAuthModeService, LucosAuthModeService, InstantiationType.Delayed);
 //#endregion
 
 //#region Settings (TW-168)
@@ -92,6 +91,18 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			markdownDescription: localize('lucos.cloud.gatewayUrl', "Base URL of the Lucos cloud gateway used for sign-in."),
 			tags: ['lucos'],
 		},
+		[LucosSettingId.AuthMode]: {
+			type: 'string',
+			default: 'cloud',
+			enum: ['cloud', 'local-only'],
+			enumDescriptions: [
+				localize('lucos.authMode.cloud', "Full experience: sign in for LLM, semantic search, and cloud indexing."),
+				localize('lucos.authMode.localOnly', "Offline / air-gapped: daemon read/grep/git tools available; LLM and cloud features are disabled and the editor is never blocked by missing auth."),
+			],
+			scope: ConfigurationScope.MACHINE,
+			markdownDescription: localize('lucos.authMode.description', "Controls whether cloud-dependent features (LLM, semantic search, cloud indexing) are enabled. Set to `local-only` for air-gapped environments."),
+			tags: ['lucos'],
+		},
 	},
 });
 //#endregion
@@ -120,7 +131,7 @@ Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews
 	openCommandActionDescriptor: {
 		id: LUCOS_FOCUS_CHAT_COMMAND_ID,
 		mnemonicTitle: localize({ key: 'miLucos', comment: ['&& denotes a mnemonic'] }, "&&Lucos AI"),
-		// TODO(TW-158): ticket specifies Cmd/Ctrl+Shift+A — verify it does not collide with an
+		// TODO(TW-158): ticket specifies Cmd/Ctrl+Shift+A - verify it does not collide with an
 		// existing default binding before finalising.
 		keybindings: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyA },
 		order: 1,
@@ -136,6 +147,16 @@ registerWorkbenchContribution2(LucosStatusBarContribution.ID, LucosStatusBarCont
 registerAction2(LucosLoginAction);
 registerAction2(LucosLogoutAction);
 registerWorkbenchContribution2(LucosAuthRestoreContribution.ID, LucosAuthRestoreContribution, WorkbenchPhase.AfterRestored);
+//#endregion
+
+//#region First-run onboarding (TW-178)
+// Must run after AfterRestored so LucosAuthRestoreContribution has already tried to resume the
+// stored JWT - that way we skip the prompt for returning authenticated users.
+registerWorkbenchContribution2(LucosFirstRunContribution.ID, LucosFirstRunContribution, WorkbenchPhase.AfterRestored);
+//#endregion
+
+//#region Workspace-open -> auto-index (TW-178 / TW-220)
+registerWorkbenchContribution2(LucosWorkspaceIndexWatcher.ID, LucosWorkspaceIndexWatcher, WorkbenchPhase.AfterRestored);
 //#endregion
 
 //#region Editor & palette actions (TW-163 Cmd+K, TW-167)

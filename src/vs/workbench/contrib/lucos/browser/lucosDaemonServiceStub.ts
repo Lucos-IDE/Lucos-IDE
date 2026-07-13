@@ -1,11 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — stub daemon service.
- *
- *  Lets the ENTIRE Lucos UI run before the real gRPC client (TW-161) and the daemon agent loop
- *  exist. It fakes a connected daemon, an in-memory auth status, and a plausible task stream
- *  (task.started → model.delta… → task.completed) so chat/timeline/status-bar can be built and
- *  demoed today. When TW-161 lands, swap the registration in lucos.contribution.ts to the real
- *  client — this file, and nothing in the UI, is the only thing that changes.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../../base/common/cancellation.js';

@@ -1,5 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — auth service implementation (TW-198).
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { Action } from '../../../../base/common/actions.js';
@@ -43,7 +44,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 
 	async login(): Promise<boolean> {
 		const email = await this.quickInputService.input({
-			prompt: localize('lucos.login.email', "Lucos — email"),
+			prompt: localize('lucos.login.email', "Lucos - email"),
 			placeHolder: 'you@example.com',
 			ignoreFocusLost: true,
 			validateInput: async value => value.includes('@') ? undefined : localize('lucos.login.emailInvalid', "Enter a valid email address."),
@@ -53,7 +54,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		}
 
 		const password = await this.quickInputService.input({
-			prompt: localize('lucos.login.password', "Lucos — password"),
+			prompt: localize('lucos.login.password', "Lucos - password"),
 			password: true,
 			ignoreFocusLost: true,
 		});
@@ -96,7 +97,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		try {
 			await this.lucosDaemonService.setCloudCredentials({ accessToken: token });
 		} catch {
-			// Daemon may be offline at startup — the status bar reflects the disconnected state,
+			// Daemon may be offline at startup - the status bar reflects the disconnected state,
 			// and restore is retried on next login. Swallow so startup never fails on auth.
 		}
 	}
@@ -112,7 +113,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			url: `${gatewayUrl}/api/v1/auth/authenticate`,
 			headers: { 'Content-Type': 'application/json' },
 			// TW-198: the gateway expects a discriminated union keyed on authType,
-			// with `action` for the email flow — not a bare { email, password }.
+			// with `action` for the email flow - not a bare { email, password }.
 			data: JSON.stringify({ authType: 'email', action: 'sign-in', email, password }),
 			callSite: 'lucos.login',
 		}, CancellationToken.None);

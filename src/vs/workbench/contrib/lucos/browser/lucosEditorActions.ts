@@ -1,10 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — editor & command-palette AI actions (TW-163 Cmd+K, TW-167 palette, TW-184 picker).
- *  Each action captures editor context and hands a goal to the chat view via
- *  ILucosChatRequestService; the existing streaming + patch-review flow handles the result.
- *
- *  IMPORTANT: the ServicesAccessor is only valid during the SYNCHRONOUS part of run(). All
- *  services must be resolved up front (before any await) and used as instances thereafter.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
@@ -23,9 +19,18 @@ import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { ILucosChatRequestService } from '../common/lucosChatRequestService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 import { ILucosIndexService } from '../common/lucosIndexService.js';
+import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 import { LUCOS_CHAT_VIEW_ID } from './lucosCommands.js';
 
 const LUCOS_CATEGORY = localize2('lucos', "Lucos");
+
+/**
+ * Gate a cloud-dependent action. Resolves ILucosAuthModeService and INotificationService from
+ * the accessor (valid synchronously). Returns false and shows a notification when local-only.
+ */
+function requireCloud(accessor: ServicesAccessor): boolean {
+	return accessor.get(ILucosAuthModeService).requireCloud(accessor.get(INotificationService));
+}
 
 function captureSelectionContext(editorService: IEditorService): ILucosWorkspaceContext | undefined {
 	const editor = editorService.activeTextEditorControl;
@@ -59,21 +64,22 @@ export class LucosCmdKAction extends Action2 {
 			keybinding: {
 				weight: KeybindingWeight.EditorContrib,
 				when: EditorContextKeys.editorTextFocus,
-				// TODO(TW-163): Ctrl/Cmd+K is a chord prefix in VS Code — confirm it doesn't clash,
+				// TODO(TW-163): Ctrl/Cmd+K is a chord prefix in VS Code - confirm it doesn't clash,
 				// or move to a dedicated inline widget with its own key handling.
 				primary: KeyMod.CtrlCmd | KeyCode.KeyK,
 			},
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
+		if (!requireCloud(accessor)) {
+			return;
+		}
 		const editorService = accessor.get(IEditorService);
 		const quickInputService = accessor.get(IQuickInputService);
 		const viewsService = accessor.get(IViewsService);
 		const chatRequestService = accessor.get(ILucosChatRequestService);
-
 		const context = captureSelectionContext(editorService);
 		const instruction = await quickInputService.input({
-			prompt: localize('lucos.cmdK.prompt', "Describe the edit for Lucos to make"),
 			placeHolder: localize('lucos.cmdK.placeholder', "e.g. add error handling"),
 			ignoreFocusLost: true,
 		});
@@ -89,7 +95,10 @@ export class LucosExplainAction extends Action2 {
 	constructor() {
 		super({ id: LucosExplainAction.ID, title: localize2('lucos.explain.title', "AI: Explain Selection"), category: LUCOS_CATEGORY, f1: true, precondition: EditorContextKeys.hasNonEmptySelection });
 	}
-	run(accessor: ServicesAccessor): Promise<void> {
+	run(accessor: ServicesAccessor): Promise<void> | undefined {
+		if (!requireCloud(accessor)) {
+			return;
+		}
 		return submitToChat(accessor.get(IViewsService), accessor.get(ILucosChatRequestService), localize('lucos.explain.goal', "Explain this code."), captureSelectionContext(accessor.get(IEditorService)));
 	}
 }
@@ -100,6 +109,9 @@ export class LucosRefactorAction extends Action2 {
 		super({ id: LucosRefactorAction.ID, title: localize2('lucos.refactor.title', "AI: Refactor Selection"), category: LUCOS_CATEGORY, f1: true, precondition: EditorContextKeys.writable });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
+		if (!requireCloud(accessor)) {
+			return;
+		}
 		const editorService = accessor.get(IEditorService);
 		const quickInputService = accessor.get(IQuickInputService);
 		const viewsService = accessor.get(IViewsService);
@@ -119,7 +131,10 @@ export class LucosGenerateTestsAction extends Action2 {
 	constructor() {
 		super({ id: LucosGenerateTestsAction.ID, title: localize2('lucos.generateTests.title', "AI: Generate Tests"), category: LUCOS_CATEGORY, f1: true, precondition: EditorContextKeys.writable });
 	}
-	run(accessor: ServicesAccessor): Promise<void> {
+	run(accessor: ServicesAccessor): Promise<void> | undefined {
+		if (!requireCloud(accessor)) {
+			return;
+		}
 		return submitToChat(accessor.get(IViewsService), accessor.get(ILucosChatRequestService), localize('lucos.generateTests.goal', "Generate unit tests for this code."), captureSelectionContext(accessor.get(IEditorService)));
 	}
 }
@@ -129,7 +144,10 @@ export class LucosReviewChangesAction extends Action2 {
 	constructor() {
 		super({ id: LucosReviewChangesAction.ID, title: localize2('lucos.reviewChanges.title', "AI: Review Changes"), category: LUCOS_CATEGORY, f1: true });
 	}
-	run(accessor: ServicesAccessor): Promise<void> {
+	run(accessor: ServicesAccessor): Promise<void> | undefined {
+		if (!requireCloud(accessor)) {
+			return;
+		}
 		return submitToChat(accessor.get(IViewsService), accessor.get(ILucosChatRequestService), localize('lucos.reviewChanges.goal', "Review my current git changes and flag issues."), undefined);
 	}
 }
@@ -144,6 +162,9 @@ export class LucosSelectCustomizationAction extends Action2 {
 		super({ id: LucosSelectCustomizationAction.ID, title: localize2('lucos.customization.title', "AI: Run Skill or Agent"), category: LUCOS_CATEGORY, f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
+		if (!requireCloud(accessor)) {
+			return;
+		}
 		const workspaceContextService = accessor.get(IWorkspaceContextService);
 		const daemonService = accessor.get(ILucosDaemonService);
 		const notificationService = accessor.get(INotificationService);
