@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — renderer-side daemon service (TW-161).
- *  Implements the UI-facing ILucosDaemonService by proxying the main-process ILucosDaemonNodeService
- *  over IPC. The channel exposes start + per-task event; here we recombine them into the
- *  AsyncIterable the UI expects, and cache connection/auth state for the synchronous getters.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { AsyncIterableSource } from '../../../../base/common/async.js';

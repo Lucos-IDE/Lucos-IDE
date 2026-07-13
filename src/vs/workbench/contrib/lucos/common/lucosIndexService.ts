@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// Lucos IDE — workspace indexing state (TW-220 / TW-169 / TW-170).
+// Lucos IDE - workspace indexing state (TW-220 / TW-169 / TW-170).
 // Owns the IDE-facing index status derived from the daemon's `index.*` event stream, so the
 // status bar and notifications read a single source of truth and the command just triggers it.
 

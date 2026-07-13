@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — auth orchestration service (TW-198).
- *  Owns the sign-in flow: prompt credentials → authenticate with the cloud gateway → store the
- *  JWT in the OS keychain → hand it to the daemon (SetCloudCredentials). Keeps all auth logic in
- *  one place; the daemon remains the source of truth for auth *state* (ILucosDaemonService).
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';

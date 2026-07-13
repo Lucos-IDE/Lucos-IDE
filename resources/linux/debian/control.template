@@ -5,14 +5,14 @@ Depends: @@DEPENDS@@
 Recommends: @@RECOMMENDS@@
 Priority: optional
 Architecture: @@ARCHITECTURE@@
-Maintainer: Microsoft Corporation <vscode-linux@microsoft.com>
-Homepage: https://code.visualstudio.com/
+Maintainer: Lucos <support@lucos.app>
+Homepage: https://lucos.app
 Installed-Size: @@INSTALLEDSIZE@@
 Provides: visual-studio-@@NAME@@
 Conflicts: visual-studio-@@NAME@@
 Replaces: visual-studio-@@NAME@@
-Description: Code editing. Redefined.
- Visual Studio Code is a new choice of tool that combines the simplicity of
- a code editor with what developers need for the core edit-build-debug cycle.
- See https://code.visualstudio.com/docs/setup/linux for installation
- instructions and FAQ.
+Description: Lucos — AI-native code editor
+ Lucos is an AI-native code editor built on VS Code. It provides intelligent
+ code editing, AI-powered search, and a local Go daemon for fast workspace
+ indexing and semantic code understanding.
+ See https://lucos.app/docs/setup/linux for installation instructions.

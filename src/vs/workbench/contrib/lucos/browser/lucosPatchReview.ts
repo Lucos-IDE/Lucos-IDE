@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — patch review card (TW-165 diff viewer + TW-166 apply/reject).
- *  Renders a daemon-proposed patch: summary, per-file native diff (old vs new via in-memory
- *  editor inputs), and Accept/Reject. Accept asks the daemon to apply (it owns the write +
- *  conflict check via base hashes); Reject discards the pending patch.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';
@@ -81,7 +79,7 @@ export class LucosPatchReview extends Disposable {
 		try {
 			const result = await this.lucosDaemonService.applyPatch(patch.patchId, workspaceRoot);
 			actions.style.display = 'none';
-			status.textContent = localize('lucos.patch.applied', "Applied — {0} file(s) changed.", result.filesChanged.length);
+			status.textContent = localize('lucos.patch.applied', "Applied - {0} file(s) changed.", result.filesChanged.length);
 		} catch (error) {
 			this.notificationService.notify({ severity: Severity.Error, message: localize('lucos.patch.applyFailed', "Failed to apply patch: {0}", error instanceof Error ? error.message : String(error)) });
 		}

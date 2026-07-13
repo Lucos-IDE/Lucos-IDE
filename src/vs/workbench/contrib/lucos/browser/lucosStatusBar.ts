@@ -1,8 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — status bar entry (TW-169).
- *  Shows daemon connection state + active model; clicking opens the chat. Reads only the seam
- *  (ILucosDaemonService) and settings, so it reflects the real client automatically once TW-161
- *  swaps the stub. Index-state (TW-203, cloud) is added here later behind the same entry.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { localize } from '../../../../nls.js';
@@ -82,8 +80,8 @@ export class LucosStatusBarContribution extends Disposable implements IWorkbench
 			ariaLabel: localize('lucos.status.aria', "Lucos AI: {0}, index {1}, model {2}", label, index.state, model),
 			command: LUCOS_FOCUS_CHAT_COMMAND_ID,
 			tooltip: index.state === LucosIndexState.Failed && index.message
-				? localize('lucos.status.tooltipFailed', "Lucos AI — indexing failed: {0}. Click to open chat.", index.message)
-				: localize('lucos.status.tooltip', "Lucos AI — click to open chat. Connection: {0}. Index: {1}.", this.lucosDaemonService.connectionState, index.state),
+				? localize('lucos.status.tooltipFailed', "Lucos AI - indexing failed: {0}. Click to open chat.", index.message)
+				: localize('lucos.status.tooltip', "Lucos AI - click to open chat. Connection: {0}. Index: {1}.", this.lucosDaemonService.connectionState, index.state),
 		};
 	}
 }

@@ -1,7 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — unit tests for the daemon stub (TW-174).
- *  The stub has no injected dependencies, so it exercises the core contract directly:
- *  health, the auth flow + change event, and the task-event stream lifecycle.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
