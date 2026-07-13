@@ -1,0 +1,682 @@
+# Lucos IDE -- environment-aware build & deploy (staging / production)
+#
+# Environments
+# ---------------------------------------------------------------------------
+#  staging    Triggered on every push to `main`.
+#             Builds all platforms with quality=insider (no code-signing).
+#             Uploads artifacts and deploys to the staging GitHub Environment.
+#             Requires no approvals -- fully automatic.
+#
+#  production Triggered on push of a semver tag (v*).
+#             Builds all platforms with quality=stable + full code-signing.
+#             Uploads signed artifacts and deploys to the production GitHub
+#             Environment.  Requires manual approval from a repo admin before
+#             the deploy step runs (configure in Settings -> Environments).
+#
+# Environment variables injected per env
+# ---------------------------------------------------------------------------
+#  LUCOS_QUALITY        insider | stable
+#  LUCOS_UPDATE_URL     https://update-staging.lucos.app | https://update.lucos.app
+#  LUCOS_SENTRY_DSN     (optional) Sentry DSN for the build
+#
+# Secrets (shared across both envs unless noted)
+# ---------------------------------------------------------------------------
+#  Staging only:
+#    (none -- unsigned builds)
+#  Production only:
+#    APPLE_CERT_P12, APPLE_CERT_PASSWORD, APPLE_TEAM_ID
+#    APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD, APPLE_ID
+#    WINDOWS_PFX_DATA, WINDOWS_PFX_PASSWORD
+#    GPG_PRIVATE_KEY, GPG_KEY_ID
+#  Both envs (configure in repo secrets or per-environment secrets):
+#    LUCOS_SENTRY_DSN   (optional)
+#    LUCOS_DEPLOY_TOKEN (optional -- used by the deploy step)
+
+name: Lucos Deploy (staging / production)
+
+on:
+  push:
+    branches: [main]          # --> staging
+    tags: ['v[0-9]+.*']       # --> production
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a running deploy mid-flight
+
+permissions:
+  contents: read
+
+# ---------------------------------------------------------------------------
+# Resolve the target environment and quality level from the ref.
+# All downstream jobs consume these outputs via needs.resolve-env.outputs.*
+# ---------------------------------------------------------------------------
+jobs:
+
+  # ── 0. Resolve environment ────────────────────────────────────────────────
+  resolve-env:
+    name: Resolve Environment
+    runs-on: ubuntu-22.04
+    outputs:
+      environment: ${{ steps.pick.outputs.environment }}
+      quality:     ${{ steps.pick.outputs.quality }}
+      update_url:  ${{ steps.pick.outputs.update_url }}
+      tag_name:    ${{ steps.pick.outputs.tag_name }}
+      is_prod:     ${{ steps.pick.outputs.is_prod }}
+    steps:
+      - name: Pick environment
+        id: pick
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "environment=production"  >> "$GITHUB_OUTPUT"
+            echo "quality=stable"          >> "$GITHUB_OUTPUT"
+            echo "update_url=https://update.lucos.app" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${GITHUB_REF#refs/tags/}"   >> "$GITHUB_OUTPUT"
+            echo "is_prod=true"            >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=staging"     >> "$GITHUB_OUTPUT"
+            echo "quality=insider"         >> "$GITHUB_OUTPUT"
+            echo "update_url=https://update-staging.lucos.app" >> "$GITHUB_OUTPUT"
+            echo "tag_name="               >> "$GITHUB_OUTPUT"
+            echo "is_prod=false"           >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── 1. Compile & hygiene ──────────────────────────────────────────────────
+  compile:
+    name: Compile & Hygiene
+    needs: resolve-env
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+
+      - name: Install apt build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxkbfile-dev \
+            libnotify-bin libkrb5-dev
+
+      - uses: ./.github/actions/restore-node-modules
+        id: cache-node-modules
+        with:
+          key-prefix: node_modules-compile-linux
+          key-args: "linux x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          for i in {1..5}; do npm ci && break || [ $i -eq 5 ] && exit 1; done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ./.github/actions/save-node-modules
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+
+      - name: Prepare built-in extensions cache key
+        run: |
+          mkdir -p .build
+          node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+
+      - uses: actions/cache/restore@v4
+        id: cache-builtin
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+
+      - name: Patch product.json for environment
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('product.json','utf8'));
+            p.quality   = '${{ needs.resolve-env.outputs.quality }}';
+            p.updateUrl = '${{ needs.resolve-env.outputs.update_url }}';
+            fs.writeFileSync('product.json', JSON.stringify(p, null, '\t'));
+          "
+
+      - name: Compile & hygiene checks
+        run: |
+          npm exec -- npm-run-all2 -lp \
+            core-ci hygiene eslint valid-layers-check \
+            define-class-fields-check vscode-dts-compile-check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VSCODE_QUALITY: ${{ needs.resolve-env.outputs.quality }}
+
+      - name: Upload patched product.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-json-${{ needs.resolve-env.outputs.environment }}
+          path: product.json
+          retention-days: 1
+
+  # ── 2. Build macOS arm64 ──────────────────────────────────────────────────
+  build-darwin-arm64:
+    name: Build macOS arm64
+    needs: [resolve-env, compile]
+    runs-on: macos-14
+    env:
+      VSCODE_ARCH: arm64
+      NPM_ARCH: arm64
+      VSCODE_QUALITY: ${{ needs.resolve-env.outputs.quality }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+
+      - name: Download patched product.json
+        uses: actions/download-artifact@v4
+        with:
+          name: product-json-${{ needs.resolve-env.outputs.environment }}
+
+      - name: Install Python & macOS build tools
+        run: |
+          c++ --version
+          python3 -m pip install --break-system-packages setuptools || true
+
+      - uses: ./.github/actions/restore-node-modules
+        id: cache-node-modules
+        with:
+          key-prefix: node_modules-darwin-arm64
+          key-args: "darwin arm64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          for i in {1..5}; do npm ci && break || [ $i -eq 5 ] && exit 1; done
+        env:
+          npm_config_arch: arm64
+          VSCODE_ARCH: arm64
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GYP_DEFINES: kerberos_use_rtld=false
+
+      - uses: ./.github/actions/save-node-modules
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+
+      - name: Compile & package
+        run: |
+          npm run gulp core-ci
+          npm run gulp vscode-darwin-arm64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import Apple certificate (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true' && env.APPLE_CERT_P12 != ''
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/buildagent.keychain"
+          KC_PASS=$(openssl rand -base64 32)
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" \
+            -k "$KEYCHAIN_PATH" -T /usr/bin/codesign -A
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | sed s/\"//g)
+          CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep -oEi "[0-9A-F]{40}" | head -1)
+          echo "CODESIGN_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Codesign (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true' && env.APPLE_CERT_P12 != ''
+        env:
+          AGENT_TEMPDIRECTORY: ${{ runner.temp }}
+          AGENT_BUILDDIRECTORY: ${{ runner.workspace }}
+        run: node build/darwin/sign.ts "$RUNNER_WORKSPACE"
+
+      - name: Create DMG
+        run: |
+          DMG_OUT="$RUNNER_TEMP/dmg"
+          mkdir -p "$DMG_OUT"
+          node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
+          python3 build/darwin/patch-dmg.py \
+            "$DMG_OUT/VSCode-darwin-arm64.dmg" resources/darwin/disk.icns || true
+          SUFFIX="${{ needs.resolve-env.outputs.environment == 'staging' && '-staging' || '' }}"
+          mv "$DMG_OUT/VSCode-darwin-arm64.dmg" \
+             "$RUNNER_TEMP/Lucos-darwin-arm64${SUFFIX}.dmg"
+          echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-arm64${SUFFIX}.dmg" >> "$GITHUB_ENV"
+
+      - name: Notarize DMG (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true' && env.APPLE_CERT_P12 != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-darwin-arm64-${{ needs.resolve-env.outputs.environment }}
+          path: ${{ env.DMG_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 3. Build macOS x64 ───────────────────────────────────────────────────
+  build-darwin-x64:
+    name: Build macOS x64
+    needs: [resolve-env, compile]
+    runs-on: macos-13
+    env:
+      VSCODE_ARCH: x64
+      NPM_ARCH: x64
+      VSCODE_QUALITY: ${{ needs.resolve-env.outputs.quality }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+
+      - name: Download patched product.json
+        uses: actions/download-artifact@v4
+        with:
+          name: product-json-${{ needs.resolve-env.outputs.environment }}
+
+      - name: Install Python & macOS build tools
+        run: |
+          c++ --version
+          python3 -m pip install --break-system-packages setuptools || \
+            python3 -m pip install setuptools
+
+      - uses: ./.github/actions/restore-node-modules
+        id: cache-node-modules
+        with:
+          key-prefix: node_modules-darwin-x64
+          key-args: "darwin x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          for i in {1..5}; do npm ci && break || [ $i -eq 5 ] && exit 1; done
+        env:
+          npm_config_arch: x64
+          VSCODE_ARCH: x64
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GYP_DEFINES: kerberos_use_rtld=false
+
+      - uses: ./.github/actions/save-node-modules
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+
+      - name: Compile & package
+        run: |
+          npm run gulp core-ci
+          npm run gulp vscode-darwin-x64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import Apple certificate (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true' && env.APPLE_CERT_P12 != ''
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/buildagent.keychain"
+          KC_PASS=$(openssl rand -base64 32)
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" \
+            -k "$KEYCHAIN_PATH" -T /usr/bin/codesign -A
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | sed s/\"//g)
+          CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep -oEi "[0-9A-F]{40}" | head -1)
+          echo "CODESIGN_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Codesign (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true' && env.APPLE_CERT_P12 != ''
+        env:
+          AGENT_TEMPDIRECTORY: ${{ runner.temp }}
+          AGENT_BUILDDIRECTORY: ${{ runner.workspace }}
+        run: node build/darwin/sign.ts "$RUNNER_WORKSPACE"
+
+      - name: Create DMG
+        run: |
+          DMG_OUT="$RUNNER_TEMP/dmg"
+          mkdir -p "$DMG_OUT"
+          node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
+          python3 build/darwin/patch-dmg.py \
+            "$DMG_OUT/VSCode-darwin-x64.dmg" resources/darwin/disk.icns || true
+          SUFFIX="${{ needs.resolve-env.outputs.environment == 'staging' && '-staging' || '' }}"
+          mv "$DMG_OUT/VSCode-darwin-x64.dmg" \
+             "$RUNNER_TEMP/Lucos-darwin-x64${SUFFIX}.dmg"
+          echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-x64${SUFFIX}.dmg" >> "$GITHUB_ENV"
+
+      - name: Notarize DMG (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true' && env.APPLE_CERT_P12 != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-darwin-x64-${{ needs.resolve-env.outputs.environment }}
+          path: ${{ env.DMG_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 4. Build Windows x64 ─────────────────────────────────────────────────
+  build-win32-x64:
+    name: Build Windows x64
+    needs: [resolve-env, compile]
+    runs-on: windows-2022
+    env:
+      VSCODE_ARCH: x64
+      NPM_ARCH: x64
+      VSCODE_QUALITY: ${{ needs.resolve-env.outputs.quality }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+
+      - name: Download patched product.json
+        uses: actions/download-artifact@v4
+        with:
+          name: product-json-${{ needs.resolve-env.outputs.environment }}
+
+      - uses: ./.github/actions/restore-node-modules
+        id: cache-node-modules
+        with:
+          key-prefix: node_modules-win32-x64
+          key-args: "win32 x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          node build/npm/preinstall.ts
+          for ($i = 1; $i -le 5; $i++) {
+            try { npm ci; break }
+            catch { if ($i -eq 5) { throw }; Start-Sleep 3 }
+          }
+        env:
+          npm_config_arch: x64
+          npm_config_foreground_scripts: 'true'
+          VSCODE_ARCH: x64
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ./.github/actions/save-node-modules
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+
+      - name: Compile & package
+        run: |
+          npm run gulp core-ci
+          npm run gulp vscode-win32-x64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Windows installer (sign in production)
+        shell: pwsh
+        run: |
+          $signFlag = ''
+          if ('${{ needs.resolve-env.outputs.is_prod }}' -eq 'true' -and
+              $env:WINDOWS_PFX_DATA -ne '') {
+            $signFlag = '--sign-lucos'
+          }
+          npm run gulp vscode-win32-x64-system-setup -- $signFlag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+
+      - name: Rename installer
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem .build\win32-x64\system-setup\*.exe | Select-Object -First 1
+          if (-not $src) { throw "Installer not found" }
+          $env_suffix = if ('${{ needs.resolve-env.outputs.environment }}' -eq 'staging') { '-staging' } else { '' }
+          $dest = "$env:RUNNER_TEMP\LucosSetup-x64${env_suffix}.exe"
+          Copy-Item $src.FullName $dest
+          Write-Output "EXE_PATH=$dest" >> $env:GITHUB_ENV
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-win32-x64-${{ needs.resolve-env.outputs.environment }}
+          path: ${{ env.EXE_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 5. Build Linux x64 (AppImage + .deb) ─────────────────────────────────
+  build-linux-x64:
+    name: Build Linux x64
+    needs: [resolve-env, compile]
+    runs-on: ubuntu-22.04
+    env:
+      VSCODE_ARCH: x64
+      NPM_ARCH: x64
+      VSCODE_QUALITY: ${{ needs.resolve-env.outputs.quality }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+
+      - name: Download patched product.json
+        uses: actions/download-artifact@v4
+        with:
+          name: product-json-${{ needs.resolve-env.outputs.environment }}
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxkbfile-dev \
+            libnotify-bin libkrb5-dev \
+            libgtk-3-0 libgbm1 \
+            fuse libfuse2 dpkg-dev fakeroot
+
+      - uses: ./.github/actions/restore-node-modules
+        id: cache-node-modules
+        with:
+          key-prefix: node_modules-linux-x64
+          key-args: "linux x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          for i in {1..5}; do npm ci && break || [ $i -eq 5 ] && exit 1; done
+        env:
+          npm_config_arch: x64
+          VSCODE_ARCH: x64
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ./.github/actions/save-node-modules
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+
+      - name: Compile & package
+        run: |
+          npm run gulp core-ci
+          npm run gulp vscode-linux-x64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import GPG key (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true' && env.GPG_PRIVATE_KEY != ''
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+
+      - name: Build AppImage
+        run: npm run gulp lucos-linux-x64-build-appimage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_KEY_ID: ${{ needs.resolve-env.outputs.is_prod == 'true' && secrets.GPG_KEY_ID || '' }}
+
+      - name: Build .deb package
+        run: |
+          npm run gulp vscode-linux-x64-prepare-deb
+          npm run gulp vscode-linux-x64-build-deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Locate artifacts
+        run: |
+          APPIMAGE=$(ls .build/linux/appimage/Lucos-*-linux-x64.AppImage 2>/dev/null | head -1)
+          DEB=$(ls .build/linux/deb/amd64/deb/*.deb 2>/dev/null | head -1)
+          echo "APPIMAGE_PATH=$APPIMAGE" >> "$GITHUB_ENV"
+          echo "DEB_PATH=$DEB"          >> "$GITHUB_ENV"
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-linux-x64-appimage-${{ needs.resolve-env.outputs.environment }}
+          path: |
+            ${{ env.APPIMAGE_PATH }}
+            ${{ env.APPIMAGE_PATH }}.asc
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-linux-x64-deb-${{ needs.resolve-env.outputs.environment }}
+          path: ${{ env.DEB_PATH }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ── 6. Deploy ─────────────────────────────────────────────────────────────
+  # Runs in the resolved GitHub Environment so that:
+  #   staging    -- auto-deploys on every main push
+  #   production -- waits for manual approval (configure required reviewers
+  #                 under Settings -> Environments -> production)
+  deploy:
+    name: Deploy to ${{ needs.resolve-env.outputs.environment }}
+    needs:
+      - resolve-env
+      - build-darwin-arm64
+      - build-darwin-x64
+      - build-win32-x64
+      - build-linux-x64
+    runs-on: ubuntu-22.04
+    environment: ${{ needs.resolve-env.outputs.environment }}
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lucos-*-${{ needs.resolve-env.outputs.environment }}
+          merge-multiple: true
+          path: dist/
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      # ---------------------------------------------------------------------------
+      # Add your actual deploy steps here, for example:
+      #
+      #   - name: Upload to S3 / GCS / R2
+      #     run: aws s3 sync dist/ s3://releases.lucos.app/${{ needs.resolve-env.outputs.environment }}/
+      #
+      #   - name: Publish GitHub Release (production only)
+      #     if: needs.resolve-env.outputs.is_prod == 'true'
+      #     uses: softprops/action-gh-release@v2
+      #     with:
+      #       files: dist/*
+      #       tag_name: ${{ needs.resolve-env.outputs.tag_name }}
+      #
+      #   - name: Notify Slack
+      #     run: ...
+      # ---------------------------------------------------------------------------
+
+      - name: Summarize deployment
+        run: |
+          ENV="${{ needs.resolve-env.outputs.environment }}"
+          QUALITY="${{ needs.resolve-env.outputs.quality }}"
+          echo "### Lucos Deploy Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`$ENV\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Quality | \`$QUALITY\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Update URL | \`${{ needs.resolve-env.outputs.update_url }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ref | \`$GITHUB_REF\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifacts |" >> "$GITHUB_STEP_SUMMARY"
+          ls dist/ | while read f; do echo "  - \`$f\`" >> "$GITHUB_STEP_SUMMARY"; done
