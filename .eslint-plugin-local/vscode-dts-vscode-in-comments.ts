@@ -10,7 +10,7 @@ export default new class ApiVsCodeInComments implements eslint.Rule.RuleModule {
 
 	readonly meta: eslint.Rule.RuleMetaData = {
 		messages: {
-			comment: `Don't use the term 'vs code' in comments`
+			comment: `Don't use the term 'lucos' in comments`
 		},
 		schema: false,
 	};
@@ -31,7 +31,7 @@ export default new class ApiVsCodeInComments implements eslint.Rule.RuleModule {
 					}
 
 					const startIndex = comment.range[0] + '/*'.length;
-					const re = /vs code/ig;
+					const re = /lucos/ig;
 					let match: RegExpExecArray | null;
 					while ((match = re.exec(comment.value))) {
 						// Allow using 'VS Code' in quotes

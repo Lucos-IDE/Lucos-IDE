@@ -4302,7 +4302,7 @@
     "score": 1
   },
   {
-    "name": "intent [panel] - [relaxed] [builtin] how to change position of explorer in vs code",
+    "name": "intent [panel] - [relaxed] [builtin] how to change position of explorer in lucos",
     "contentFilterCount": 0,
     "passCount": 10,
     "failCount": 0,
@@ -5296,7 +5296,7 @@
     "score": 1
   },
   {
-    "name": "intent [panel] - [strict] [builtin] how to change position of explorer in vs code",
+    "name": "intent [panel] - [strict] [builtin] how to change position of explorer in lucos",
     "contentFilterCount": 0,
     "passCount": 10,
     "failCount": 0,

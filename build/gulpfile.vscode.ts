@@ -645,7 +645,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 
 	const [vscode, vscodeMin] = ['', 'min'].map(minified => {
 		const sourceFolderName = `out-vscode${dashed(minified)}`;
-		const destinationFolderName = `VSCode${dashed(platform)}${dashed(arch)}`;
+		const destinationFolderName = `Lucos${dashed(platform)}${dashed(arch)}`;
 
 		const packageTasks: task.Task[] = [
 			compileNativeExtensionsBuildTask,
@@ -741,4 +741,30 @@ task.task('vscode-translations-import', function () {
 	}));
 });
 
+// #endregion
+
+// #region Lucos-branded task aliases
+// These aliases mirror the upstream vscode-* tasks under lucos-* names so CI
+// workflows and local developer commands can use Lucos-specific nomenclature
+// without touching the upstream gulpfile build logic.
+[
+	// packaging (min-ci = compile already done by core-ci; uses pre-built out-vscode-min)
+	'darwin-arm64-min-ci',
+	'darwin-x64-min-ci',
+	'win32-x64-min-ci',
+	'win32-x64-system-setup',
+	'win32-x64-user-setup',
+	'linux-x64-min-ci',
+	'linux-arm64-min-ci',
+	// deb packaging
+	'linux-x64-prepare-deb',
+	'linux-x64-build-deb',
+	'linux-arm64-prepare-deb',
+	'linux-arm64-build-deb',
+].forEach(suffix => {
+	const src = task.task(`vscode-${suffix}`) as task.Task;
+	if (src) {
+		task.task(task.define(`lucos-${suffix}`, src));
+	}
+});
 // #endregion
