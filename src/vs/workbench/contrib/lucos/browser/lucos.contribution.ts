@@ -72,6 +72,17 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			markdownDescription: localize('lucos.agent.model', "Default model for Lucos chat and edits. The available set is ultimately gated by your plan."),
 			tags: ['lucos'],
 		},
+		[LucosSettingId.AgentPermissionMode]: {
+			type: 'string',
+			default: 'auto',
+			enum: ['auto', 'manual'],
+			enumDescriptions: [
+				localize('lucos.agent.permissionMode.auto', "Auto-approve safe tools (read, search); patches still require review in the IDE."),
+				localize('lucos.agent.permissionMode.manual', "Require explicit approval for risky tools before execution."),
+			],
+			markdownDescription: localize('lucos.agent.permissionMode', "How the daemon handles tool permission prompts for agent tasks."),
+			tags: ['lucos'],
+		},
 		[LucosSettingId.ChatStreaming]: {
 			type: 'boolean',
 			default: true,

@@ -4,17 +4,23 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { ITaskEvent, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { taskPayloadString } from '../../../../platform/lucos/common/lucosTaskPayload.js';
 
-interface IToolStartedPayload { readonly toolCallId?: string; readonly toolName?: string; readonly safeSummary?: string }
-interface IToolCompletedPayload { readonly toolCallId?: string; readonly status?: string }
+interface IToolStartedPayload { readonly toolCallId?: string; readonly tool_call_id?: string; readonly toolName?: string; readonly tool_name?: string; readonly safeSummary?: string; readonly safe_summary?: string }
+interface IToolCompletedPayload { readonly toolCallId?: string; readonly tool_call_id?: string; readonly toolName?: string; readonly tool_name?: string; readonly status?: string }
+
+const HIDE_DELAY_MS = 400;
 
 export class LucosActivityTimeline extends Disposable {
 
 	private readonly container: HTMLElement;
-	private readonly entries = new Map<string, HTMLElement>();
+	private readonly activeEntry: HTMLElement;
+	private readonly hideScheduler: RunOnceScheduler;
+	private activeToolCount = 0;
 
 	constructor(parent: HTMLElement) {
 		super();
@@ -22,20 +28,33 @@ export class LucosActivityTimeline extends Disposable {
 		this.container.style.display = 'none';
 		this.container.style.padding = '4px 8px';
 		this.container.style.fontSize = '0.9em';
-		this.container.style.opacity = '0.8';
+		this.container.style.opacity = '0.75';
+		this.activeEntry = dom.append(this.container, dom.$('.lucos-timeline-entry'));
+		this.hideScheduler = this._register(new RunOnceScheduler(() => this.hide(), HIDE_DELAY_MS));
 	}
 
 	handleEvent(event: ITaskEvent): void {
 		switch (event.kind) {
 			case LucosTaskEventKind.ToolStarted: {
 				const payload = event.payload as IToolStartedPayload;
-				this.addEntry(payload.toolCallId ?? `seq-${event.sequence}`, this.describe(payload));
+				const toolName = taskPayloadString(payload, 'toolName', 'tool_name');
+				if (toolName === 'propose_patch' || toolName === 'write_file') {
+					break;
+				}
+				this.hideScheduler.cancel();
+				this.activeToolCount++;
+				this.show(this.describe(payload));
 				break;
 			}
 			case LucosTaskEventKind.ToolCompleted: {
 				const payload = event.payload as IToolCompletedPayload;
-				if (payload.toolCallId) {
-					this.markComplete(payload.toolCallId);
+				const toolName = taskPayloadString(payload, 'toolName', 'tool_name');
+				if (toolName === 'propose_patch' || toolName === 'write_file') {
+					break;
+				}
+				this.activeToolCount = Math.max(0, this.activeToolCount - 1);
+				if (this.activeToolCount === 0) {
+					this.hideScheduler.schedule();
 				}
 				break;
 			}
@@ -43,17 +62,22 @@ export class LucosActivityTimeline extends Disposable {
 	}
 
 	clear(): void {
-		this.entries.clear();
-		dom.clearNode(this.container);
-		this.container.style.display = 'none';
+		this.activeToolCount = 0;
+		this.hideScheduler.cancel();
+		this.hide();
+	}
+
+	finish(): void {
+		this.clear();
 	}
 
 	private describe(payload: IToolStartedPayload): string {
-		const summary = payload.safeSummary?.trim();
+		const summary = taskPayloadString(payload, 'safeSummary', 'safe_summary')?.trim();
 		if (summary) {
 			return summary;
 		}
-		switch (payload.toolName) {
+		const toolName = taskPayloadString(payload, 'toolName', 'tool_name');
+		switch (toolName) {
 			case 'search_text':
 			case 'semantic_search': return localize('lucos.timeline.searching', "Searching…");
 			case 'read_file': return localize('lucos.timeline.reading', "Reading files…");
@@ -61,24 +85,17 @@ export class LucosActivityTimeline extends Disposable {
 			case 'run_command': return localize('lucos.timeline.running', "Running command…");
 			case 'propose_patch':
 			case 'write_file': return localize('lucos.timeline.writing', "Writing changes…");
-			default: return payload.toolName ?? localize('lucos.timeline.working', "Working…");
+			default: return toolName ?? localize('lucos.timeline.working', "Working…");
 		}
 	}
 
-	private addEntry(id: string, label: string): void {
+	private show(label: string): void {
 		this.container.style.display = 'block';
-		let entry = this.entries.get(id);
-		if (!entry) {
-			entry = dom.append(this.container, dom.$('.lucos-timeline-entry'));
-			this.entries.set(id, entry);
-		}
-		entry.textContent = `⋯ ${label}`;
+		this.activeEntry.textContent = `⋯ ${label}`;
 	}
 
-	private markComplete(id: string): void {
-		const entry = this.entries.get(id);
-		if (entry?.textContent) {
-			entry.textContent = entry.textContent.replace(/^⋯/, '✓');
-		}
+	private hide(): void {
+		this.container.style.display = 'none';
+		this.activeEntry.textContent = '';
 	}
 }

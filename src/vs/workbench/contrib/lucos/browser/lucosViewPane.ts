@@ -24,7 +24,9 @@ import { ILucosConversationService } from '../common/lucosConversationService.js
 import { ILucosChatRequest, ILucosChatRequestService } from '../common/lucosChatRequestService.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
-import { ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { taskPayloadString } from '../../../../platform/lucos/common/lucosTaskPayload.js';
+import { LucosSettingId } from '../common/lucosConfiguration.js';
 import { LucosActivityTimeline } from './lucosActivityTimeline.js';
 import { ILucosContextMention, LucosContextPicker } from './lucosContextPicker.js';
 import { LucosPatchReview } from './lucosPatchReview.js';
@@ -42,9 +44,11 @@ export class LucosChatViewPane extends ViewPane {
 	private timeline!: LucosActivityTimeline;
 
 	private chipsContainer!: HTMLElement;
+	private patchContainer!: HTMLElement;
 	private contextPicker!: LucosContextPicker;
 	private patchReview!: LucosPatchReview;
 	private readonly mentions: ILucosContextMention[] = [];
+	private readonly shownPatchIds = new Set<string>();
 
 	private messagesContainer!: HTMLElement;
 	private inputBox!: HTMLTextAreaElement;
@@ -121,6 +125,11 @@ export class LucosChatViewPane extends ViewPane {
 		this.chipsContainer.style.gap = '4px';
 		this.chipsContainer.style.padding = '0 8px';
 
+		// Single patch review slot (replaces prior proposals for the active task).
+		this.patchContainer = dom.append(container, dom.$('.lucos-chat-patch'));
+		this.patchContainer.style.display = 'none';
+		this.patchContainer.style.padding = '0 8px';
+
 		// Composer.
 		const inputRow = dom.append(container, dom.$('.lucos-chat-input'));
 		inputRow.style.display = 'flex';
@@ -178,6 +187,8 @@ export class LucosChatViewPane extends ViewPane {
 			return;
 		}
 		this.timeline.clear();
+		this.shownPatchIds.clear();
+		this.clearPatchReview();
 		this.conversationService.addMessage(LucosMessageRole.User, goal);
 		const assistant = this.conversationService.addMessage(LucosMessageRole.Assistant, '', true);
 
@@ -187,7 +198,17 @@ export class LucosChatViewPane extends ViewPane {
 
 		// Always attach the workspace root so the daemon's file tools resolve paths (TW-161/220).
 		const workspaceRoot = this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
-		const request: IStartAgentTaskRequest = { goal, sessionId: this.conversationService.activeSession.id, context: { ...(contextOverride ?? this.buildContext()), workspaceRoot }, selectedAgentPath };
+		const model = (this.configurationService.getValue<string>(LucosSettingId.AgentModel) ?? '').trim();
+		const permissionModeSetting = this.configurationService.getValue<string>(LucosSettingId.AgentPermissionMode) ?? 'auto';
+		const permissionMode = permissionModeSetting === 'manual' ? LucosPermissionMode.Manual : LucosPermissionMode.Auto;
+		const request: IStartAgentTaskRequest = {
+			goal,
+			sessionId: this.conversationService.activeSession.id,
+			model: model || undefined,
+			permissionMode,
+			context: { ...(contextOverride ?? this.buildContext()), workspaceRoot },
+			selectedAgentPath,
+		};
 		if (!contextOverride) {
 			this.clearContext();
 		}
@@ -197,7 +218,7 @@ export class LucosChatViewPane extends ViewPane {
 				this.timeline.handleEvent(event);
 				switch (event.kind) {
 					case LucosTaskEventKind.ModelDelta: {
-						const delta = (event.payload as { textDelta?: string }).textDelta ?? '';
+						const delta = taskPayloadString(event.payload, 'textDelta', 'text_delta') ?? '';
 						this.conversationService.appendToMessage(assistant.id, delta);
 						break;
 					}
@@ -227,6 +248,7 @@ export class LucosChatViewPane extends ViewPane {
 					}
 					case LucosTaskEventKind.TaskCompleted:
 					case LucosTaskEventKind.Error:
+						this.timeline.finish();
 						break;
 					// tool.started / patch.proposed are consumed by the timeline (TW-162) and diff (TW-165).
 				}
@@ -234,6 +256,7 @@ export class LucosChatViewPane extends ViewPane {
 		} catch (error) {
 			this.conversationService.appendToMessage(assistant.id, `\n\n[error] ${error}`);
 		} finally {
+			this.timeline.finish();
 			this.conversationService.completeMessage(assistant.id);
 			this.activeStream = undefined;
 			this.setStreaming(false);
@@ -288,11 +311,21 @@ export class LucosChatViewPane extends ViewPane {
 	}
 
 	private async showPatch(patchId: string): Promise<void> {
-		const patch = await this.lucosDaemonService.getPendingPatch(patchId);
-		if (patch) {
-			this.patchReview.render(this.messagesContainer, patch);
-			this.scrollToBottom();
+		if (this.shownPatchIds.has(patchId)) {
+			return;
 		}
+		const patch = await this.lucosDaemonService.getPendingPatch(patchId);
+		if (!patch) {
+			return;
+		}
+		this.shownPatchIds.add(patchId);
+		this.patchReview.render(this.patchContainer, patch, () => this.clearPatchReview());
+		this.scrollToBottom();
+	}
+
+	private clearPatchReview(): void {
+		dom.clearNode(this.patchContainer);
+		this.patchContainer.style.display = 'none';
 	}
 
 	private setStreaming(streaming: boolean): void {

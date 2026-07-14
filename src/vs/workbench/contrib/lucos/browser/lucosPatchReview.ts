@@ -24,7 +24,10 @@ export class LucosPatchReview extends Disposable {
 		super();
 	}
 
-	render(container: HTMLElement, patch: ILucosPatchProposal): void {
+	render(container: HTMLElement, patch: ILucosPatchProposal, onResolved?: () => void): void {
+		dom.clearNode(container);
+		container.style.display = 'block';
+
 		const card = dom.append(container, dom.$('.lucos-patch-card'));
 		card.style.margin = '8px 0';
 		card.style.padding = '8px';
@@ -59,8 +62,8 @@ export class LucosPatchReview extends Disposable {
 		status.style.marginTop = '4px';
 		status.style.opacity = '0.8';
 
-		this._register(dom.addDisposableListener(acceptButton, 'click', () => void this.accept(patch, actions, status)));
-		this._register(dom.addDisposableListener(rejectButton, 'click', () => void this.reject(patch, actions, status)));
+		this._register(dom.addDisposableListener(acceptButton, 'click', () => void this.accept(patch, actions, status, onResolved)));
+		this._register(dom.addDisposableListener(rejectButton, 'click', () => void this.reject(patch, actions, status, onResolved)));
 	}
 
 	private async openDiff(change: ILucosFileChange): Promise<void> {
@@ -74,22 +77,24 @@ export class LucosPatchReview extends Disposable {
 		});
 	}
 
-	private async accept(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement): Promise<void> {
+	private async accept(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement, onResolved?: () => void): Promise<void> {
 		const workspaceRoot = this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath ?? '';
 		try {
 			const result = await this.lucosDaemonService.applyPatch(patch.patchId, workspaceRoot);
 			actions.style.display = 'none';
 			status.textContent = localize('lucos.patch.applied', "Applied - {0} file(s) changed.", result.filesChanged.length);
+			onResolved?.();
 		} catch (error) {
 			this.notificationService.notify({ severity: Severity.Error, message: localize('lucos.patch.applyFailed', "Failed to apply patch: {0}", error instanceof Error ? error.message : String(error)) });
 		}
 	}
 
-	private async reject(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement): Promise<void> {
+	private async reject(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement, onResolved?: () => void): Promise<void> {
 		try {
 			await this.lucosDaemonService.rejectPatch(patch.patchId);
 			actions.style.display = 'none';
 			status.textContent = localize('lucos.patch.rejected', "Rejected.");
+			onResolved?.();
 		} catch (error) {
 			this.notificationService.notify({ severity: Severity.Error, message: localize('lucos.patch.rejectFailed', "Failed to reject patch: {0}", error instanceof Error ? error.message : String(error)) });
 		}
