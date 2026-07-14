@@ -350,10 +350,13 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 		}
 
 		// Help in case we fail to start it
+		// Use a generous 30-second timeout for dev builds — large projects with many
+		// built-in extensions (e.g. copilot) can legitimately take >10 s to start.
+		const startupWarningMs = 30000;
 		let startupTimeoutHandle: Timeout | undefined;
 		if (!this._environmentService.isBuilt && !this._environmentService.remoteAuthority || this._isExtensionDevHost) {
 			startupTimeoutHandle = setTimeout(() => {
-				this._logService.error(`[LocalProcessExtensionHost]: Extension host did not start in 10 seconds (debugBrk: ${this._isExtensionDevDebugBrk})`);
+				this._logService.error(`[LocalProcessExtensionHost]: Extension host did not start in ${startupWarningMs / 1000} seconds (debugBrk: ${this._isExtensionDevDebugBrk})`);
 
 				const msg = this._isExtensionDevDebugBrk
 					? nls.localize('extensionHost.startupFailDebug', "Extension host did not start in 10 seconds, it might be stopped on the first line and needs a debugger to continue.")
@@ -369,7 +372,7 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 						priority: NotificationPriority.URGENT
 					}
 				);
-			}, 10000);
+			}, startupWarningMs);
 		}
 
 		// Initialize extension host process with hand shakes

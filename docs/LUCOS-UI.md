@@ -139,7 +139,7 @@ Everything below is typecheck-verified but **not runtime-tested**. Once the nati
 **Local dev pre-reqs**
 - Start the daemon: `make dev` — it writes `~/.lucos/daemon.json` (`grpc_port`, `local_session_token`).
 - Point sign-in at the local gateway (TW-168): set `lucos.cloud.gatewayUrl` to `http://localhost:3007`
-  (the setting defaults to the prod `https://api.lucos.com`; the daemon's own `LUCOS_GATEWAY_URL`
+  (the setting defaults to the prod `https://stagingapi.lucos.com`; the daemon's own `LUCOS_GATEWAY_URL`
   is set via `local-daemon/.env`).
 
 - [ ] Fork builds & launches (`npm install` succeeds, `./scripts/code.sh` opens) — **blocked on TW-155 (native modules)**

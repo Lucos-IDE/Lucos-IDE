@@ -5,7 +5,7 @@
 
 import { app } from 'electron';
 import { coalesce } from '../../../base/common/arrays.js';
-import { IProcessEnvironment, isMacintosh } from '../../../base/common/platform.js';
+import { IProcessEnvironment, isMacintosh, isWindows } from '../../../base/common/platform.js';
 import { URI } from '../../../base/common/uri.js';
 import { whenDeleted } from '../../../base/node/pfs.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
@@ -50,7 +50,7 @@ export class LaunchMainService implements ILaunchMainService {
 	async start(args: NativeParsedArgs, userEnv: IProcessEnvironment): Promise<void> {
 		this.logService.trace('Received data from other instance: ', args, userEnv);
 
-		// macOS: Electron > 7.x changed its behaviour to not
+		// macOS/Windows: Electron > 7.x changed its behaviour to not
 		// bring the application to the foreground when a window
 		// is focused programmatically. Only via `app.focus` and
 		// the option `steal: true` can you get the previous
@@ -59,7 +59,9 @@ export class LaunchMainService implements ILaunchMainService {
 		// is not in the foreground and since we got instructed
 		// to open a new window from another instance, we ensure
 		// that the app has focus.
-		if (isMacintosh) {
+		// On Windows, the second instance called AllowSetForegroundWindow
+		// before forwarding here, so we have permission to steal focus.
+		if (isMacintosh || isWindows) {
 			app.focus({ steal: true });
 		}
 

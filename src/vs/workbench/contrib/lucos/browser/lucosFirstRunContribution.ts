@@ -4,86 +4,52 @@
  *--------------------------------------------------------------------------------------------*/
 
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE - first-run onboarding prompt (TW-178 / TW-198).
+ *  Lucos IDE - sign-in on startup (Cursor-like onboarding).
  *
- *  On the very first launch of a fresh install, if the user has not already authenticated,
- *  this contribution shows a dismissible notification that prompts them to sign in.
- *  After a successful sign-in it immediately kicks off workspace indexing so the status bar
- *  transitions Connected -> Indexing -> Ready without any further user action.
- *
- *  "First run" is defined as StorageScope.APPLICATION being new (i.e. no prior application
- *  data exists for this install). Returning users whose JWT was already restored by
- *  LucosAuthRestoreContribution will have a non-Unauthenticated authStatus and are skipped.
+ *  On every startup, if the user has not authenticated, this contribution opens a dedicated
+ *  sign-in editor tab in the main editor area and reveals the Lucos sidebar.  The editor tab
+ *  closes itself automatically via onDidChangeSignInState once the user signs in.
  *--------------------------------------------------------------------------------------------*/
 
-import { Action } from '../../../../base/common/actions.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { localize } from '../../../../nls.js';
-import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
-import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
-import { ILucosDaemonService } from '../common/lucosDaemonService.js';
-import { ILucosIndexService } from '../common/lucosIndexService.js';
-import { LucosAuthState } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IViewsService } from '../../../services/views/common/viewsService.js';
+import { LucosSignInEditorInput } from './lucosSignInEditorInput.js';
+import { LUCOS_VIEW_CONTAINER_ID } from './lucosCommands.js';
 
-/** Storage key written after the first-run prompt has been shown (so it never re-appears). */
-const FIRST_RUN_SHOWN_KEY = 'lucos.firstRun.promptShown';
+/**
+ * Opens the Lucos sign-in editor and reveals the Lucos sidebar on every startup when the
+ * user is not authenticated.  The sign-in editor closes itself automatically once the user
+ * completes sign-in via {@link ILucosAuthService.onDidChangeSignInState}.
+ */
+export class LucosSignInOnStartupContribution extends Disposable implements IWorkbenchContribution {
 
-export class LucosFirstRunContribution extends Disposable implements IWorkbenchContribution {
-
-	static readonly ID = 'workbench.contrib.lucosFirstRun';
+	static readonly ID = 'workbench.contrib.lucosSignInOnStartup';
 
 	constructor(
-		@IStorageService private readonly storageService: IStorageService,
-		@INotificationService private readonly notificationService: INotificationService,
 		@ILucosAuthService private readonly authService: ILucosAuthService,
-		@ILucosDaemonService private readonly daemonService: ILucosDaemonService,
-		@ILucosIndexService private readonly indexService: ILucosIndexService,
+		@IEditorService private readonly editorService: IEditorService,
+		@IViewsService private readonly viewsService: IViewsService,
 	) {
 		super();
-		void this.maybePrompt();
+		void this.maybeShowSignIn();
 	}
 
-	private async maybePrompt(): Promise<void> {
-		// Only show once, ever.
-		if (this.storageService.getBoolean(FIRST_RUN_SHOWN_KEY, StorageScope.APPLICATION, false)) {
-			return;
-		}
-		// Skip if the user is already authenticated (session was restored on startup).
-		if (this.daemonService.authStatus.state !== LucosAuthState.Unauthenticated) {
+	private async maybeShowSignIn(): Promise<void> {
+		if (this.authService.isSignedIn) {
 			return;
 		}
 
-		this.storageService.store(FIRST_RUN_SHOWN_KEY, true, StorageScope.APPLICATION, /* target */ 1 /* StorageTarget.MACHINE */);
+		// Reveal the Lucos sidebar so the user sees the activity bar context.
+		await this.viewsService.openViewContainer(LUCOS_VIEW_CONTAINER_ID, false);
 
-		this.notificationService.notify({
-			severity: Severity.Info,
-			message: localize('lucos.firstRun.message', "Sign in to Lucos to enable AI assistance and workspace indexing."),
-			actions: {
-				primary: [
-					new Action(
-						'lucos.firstRun.signIn',
-						localize('lucos.firstRun.signIn', "Sign In"),
-						undefined,
-						true,
-						async () => {
-							const ok = await this.authService.login();
-							if (ok) {
-								// Kick off indexing immediately after sign-in so the status bar
-								// transitions Connected -> Indexing -> Ready automatically.
-								void this.indexService.index();
-							}
-						},
-					),
-				],
-				secondary: [
-					new Action(
-						'lucos.firstRun.skip',
-						localize('lucos.firstRun.skip', "Skip (local-only mode)"),
-					),
-				],
-			},
+		// Open the dedicated full-screen sign-in editor tab.
+		await this.editorService.openEditor(new LucosSignInEditorInput(), {
+			pinned: false,
+			revealIfOpened: true,
 		});
 	}
 }
+

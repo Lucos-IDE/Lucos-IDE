@@ -52,7 +52,23 @@ export class ElectronURLListener extends Disposable {
 		// Skip in portable mode: the registered command wouldn't preserve
 		// portable mode settings, causing issues with OAuth flows.
 		if (isWindows && !environmentMainService.isPortable) {
-			const windowsParameters = environmentMainService.isBuilt ? [] : [`"${environmentMainService.appRoot}"`];
+			// In dev builds, pass the absolute app root so Electron knows where to find the app
+			// when launched by the OS protocol handler (CWD will be C:\Windows\System32).
+			// Do NOT manually quote the path — setAsDefaultProtocolClient handles quoting; extra
+			// embedded quotes cause Node to treat the path as relative, breaking the launch.
+			const windowsParameters = environmentMainService.isBuilt ? [] : [environmentMainService.appRoot];
+
+			// In dev builds the VSCODE_DEV env var causes the running instance to use a
+			// different user-data-dir (code-oss-dev) than the default product name would
+			// produce. The OS-spawned protocol-handler process does NOT inherit that env var,
+			// so it computes a different IPC handle and cannot find the running instance —
+			// resulting in a new blank window instead of routing the URL to the existing one.
+			// Explicitly forwarding the user-data-dir ensures both processes share the same
+			// IPC socket and the URL is delivered to the already-open window.
+			if (!environmentMainService.isBuilt) {
+				windowsParameters.push('--user-data-dir', environmentMainService.userDataPath);
+			}
+
 			windowsParameters.push('--open-url', '--');
 			app.setAsDefaultProtocolClient(productService.urlProtocol, process.execPath, windowsParameters);
 		}
