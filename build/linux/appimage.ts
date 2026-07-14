@@ -6,7 +6,7 @@
 /**
  * Lucos AppImage builder.
  *
- * Converts the compiled VSCode-linux-<arch> app directory into a self-contained,
+ * Converts the compiled Lucos-linux-<arch> app directory into a self-contained,
  * portable AppImage that runs on any glibc-based Linux distribution (x86_64 or
  * aarch64) without system installation.
  *
@@ -196,7 +196,7 @@ function copyIcon(appDir: string): void {
 // -- Main builder --------------------------------------------------------------
 
 /**
- * Builds the AppImage from the `VSCode-linux-<arch>` directory that was
+ * Builds the AppImage from the `Lucos-linux-<arch>` directory that was
  * produced by `npm run gulp vscode-linux-<arch>-min-ci`.
  *
  * @param arch    Target architecture: `'x64'` or `'arm64'`.
@@ -204,7 +204,7 @@ function copyIcon(appDir: string): void {
  * @returns       Absolute path of the produced `.AppImage` file.
  */
 export async function buildAppImage(arch: string, outDir: string): Promise<string> {
-	const appDir = path.join(path.dirname(root), `VSCode-linux-${arch}`);
+	const appDir = path.join(path.dirname(root), `Lucos-linux-${arch}`);
 
 	if (!fs.existsSync(appDir)) {
 		throw new Error(

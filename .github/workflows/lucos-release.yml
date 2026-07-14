@@ -302,10 +302,10 @@ jobs:
           mkdir -p "$DMG_OUT"
           node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
           python3 build/darwin/patch-dmg.py \
-            "$DMG_OUT/VSCode-darwin-arm64.dmg" \
+            "$DMG_OUT/Lucos-darwin-arm64.dmg" \
             resources/darwin/disk.icns || true
           # Rename to Lucos branding
-          mv "$DMG_OUT/VSCode-darwin-arm64.dmg" \
+          mv "$DMG_OUT/Lucos-darwin-arm64.dmg" \
              "$RUNNER_TEMP/Lucos-darwin-arm64.dmg"
           echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-arm64.dmg" >> "$GITHUB_ENV"
 
@@ -339,7 +339,7 @@ jobs:
       - name: Archive macOS arm64 app for smoke tests
         run: |
           set -e
-          APP_ROOT="$RUNNER_WORKSPACE/VSCode-darwin-arm64"
+          APP_ROOT="$RUNNER_WORKSPACE/Lucos-darwin-arm64"
           APP_NAME=$(node -p "require('./product.json').nameLong").app
           zip -Xry "$RUNNER_TEMP/Lucos-darwin-arm64-app.zip" \
             "$APP_ROOT/$APP_NAME"
@@ -483,9 +483,9 @@ jobs:
           mkdir -p "$DMG_OUT"
           node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
           python3 build/darwin/patch-dmg.py \
-            "$DMG_OUT/VSCode-darwin-x64.dmg" \
+            "$DMG_OUT/Lucos-darwin-x64.dmg" \
             resources/darwin/disk.icns || true
-          mv "$DMG_OUT/VSCode-darwin-x64.dmg" \
+          mv "$DMG_OUT/Lucos-darwin-x64.dmg" \
              "$RUNNER_TEMP/Lucos-darwin-x64.dmg"
           echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-x64.dmg" >> "$GITHUB_ENV"
 
@@ -814,7 +814,7 @@ jobs:
       - name: Extract macOS arm64 app
         run: |
           set -e
-          APP_ROOT="$RUNNER_WORKSPACE/VSCode-darwin-arm64"
+          APP_ROOT="$RUNNER_WORKSPACE/Lucos-darwin-arm64"
           mkdir -p "$APP_ROOT"
           unzip -q "$RUNNER_TEMP/app-download/Lucos-darwin-arm64-app.zip" \
             -d "$APP_ROOT"
@@ -839,7 +839,7 @@ jobs:
         timeout-minutes: 25
         run: |
           APP_NAME=$(node -p "require('./product.json').nameLong").app
-          APP_PATH="$RUNNER_WORKSPACE/VSCode-darwin-arm64/$APP_NAME"
+          APP_PATH="$RUNNER_WORKSPACE/Lucos-darwin-arm64/$APP_NAME"
           npm run smoketest-no-compile -- \
             --tracing \
             --build "$APP_PATH"

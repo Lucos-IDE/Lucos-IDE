@@ -257,9 +257,9 @@ jobs:
           mkdir -p "$DMG_OUT"
           node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
           python3 build/darwin/patch-dmg.py \
-            "$DMG_OUT/VSCode-darwin-arm64.dmg" resources/darwin/disk.icns || true
+            "$DMG_OUT/Lucos-darwin-arm64.dmg" resources/darwin/disk.icns || true
           SUFFIX="${{ needs.resolve-env.outputs.environment == 'staging' && '-staging' || '' }}"
-          mv "$DMG_OUT/VSCode-darwin-arm64.dmg" \
+          mv "$DMG_OUT/Lucos-darwin-arm64.dmg" \
              "$RUNNER_TEMP/Lucos-darwin-arm64${SUFFIX}.dmg"
           echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-arm64${SUFFIX}.dmg" >> "$GITHUB_ENV"
 
@@ -385,9 +385,9 @@ jobs:
           mkdir -p "$DMG_OUT"
           node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
           python3 build/darwin/patch-dmg.py \
-            "$DMG_OUT/VSCode-darwin-x64.dmg" resources/darwin/disk.icns || true
+            "$DMG_OUT/Lucos-darwin-x64.dmg" resources/darwin/disk.icns || true
           SUFFIX="${{ needs.resolve-env.outputs.environment == 'staging' && '-staging' || '' }}"
-          mv "$DMG_OUT/VSCode-darwin-x64.dmg" \
+          mv "$DMG_OUT/Lucos-darwin-x64.dmg" \
              "$RUNNER_TEMP/Lucos-darwin-x64${SUFFIX}.dmg"
           echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-x64${SUFFIX}.dmg" >> "$GITHUB_ENV"
 
