@@ -163,6 +163,12 @@ export interface IProductConfiguration {
 	readonly languageExtensionTips?: readonly string[];
 	readonly trustedExtensionUrlPublicKeys?: IStringDictionary<string[]>;
 	readonly trustedExtensionAuthAccess?: string[] | IStringDictionary<string[]>;
+
+	/** Google OAuth client ID used for IDE-native Google sign-in. */
+	readonly googleClientId?: string;
+
+	/** Base URL of the Lucos cloud gateway (e.g. https://stagingapi.lucos.com). */
+	readonly lucosGatewayUrl?: string;
 	readonly trustedMcpAuthAccess?: string[] | IStringDictionary<string[]>;
 	readonly inheritAuthAccountPreference?: IStringDictionary<string[]>;
 	readonly trustedExtensionProtocolHandlers?: readonly string[];

@@ -42,6 +42,21 @@ export class LucosLogoutAction extends Action2 {
 	}
 }
 
+export class LucosGoogleLoginAction extends Action2 {
+	static readonly ID = 'lucos.loginWithGoogle';
+	constructor() {
+		super({
+			id: LucosGoogleLoginAction.ID,
+			title: localize2('lucos.loginWithGoogle.title', "Sign In with Google"),
+			category: LUCOS_CATEGORY,
+			f1: true,
+		});
+	}
+	run(accessor: ServicesAccessor): Promise<boolean> {
+		return accessor.get(ILucosAuthService).loginWithGoogle();
+	}
+}
+
 /** Resumes a stored session on startup by handing any keychain JWT to the daemon. */
 export class LucosAuthRestoreContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.lucosAuthRestore';

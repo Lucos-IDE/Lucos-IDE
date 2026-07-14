@@ -27,13 +27,14 @@ import { LucosAuthService } from './lucosAuthService.js';
 import { LucosIndexService } from './lucosIndexService.js';
 import { LucosChatViewPane } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
-import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction } from './lucosLoginActions.js';
+import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosGoogleLoginAction } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
 import { LucosFirstRunContribution } from './lucosFirstRunContribution.js';
 import { LucosWorkspaceIndexWatcher } from './lucosWorkspaceIndexWatcher.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 import { LucosAuthModeService } from './lucosAuthModeService.js';
+import { LucosAuthCallbackHandler } from './lucosAuthCallbackHandler.js';
 
 //#region Services
 // The daemon service is bound per-platform: desktop -> real gRPC client
@@ -86,9 +87,16 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		},
 		[LucosSettingId.CloudGatewayUrl]: {
 			type: 'string',
-			default: 'https://api.lucos.com',
+			default: 'https://stagingapi.lucos.com',
 			scope: ConfigurationScope.MACHINE,
 			markdownDescription: localize('lucos.cloud.gatewayUrl', "Base URL of the Lucos cloud gateway used for sign-in."),
+			tags: ['lucos'],
+		},
+		[LucosSettingId.GoogleClientId]: {
+			type: 'string',
+			default: '',
+			scope: ConfigurationScope.MACHINE,
+			markdownDescription: localize('lucos.cloud.googleClientId', "Google OAuth client ID for **Sign In with Google**. Obtain this from your Google Cloud Console and set it here to enable Google login."),
 			tags: ['lucos'],
 		},
 		[LucosSettingId.AuthMode]: {
@@ -146,7 +154,9 @@ registerWorkbenchContribution2(LucosStatusBarContribution.ID, LucosStatusBarCont
 //#region Auth (TW-198)
 registerAction2(LucosLoginAction);
 registerAction2(LucosLogoutAction);
+registerAction2(LucosGoogleLoginAction);
 registerWorkbenchContribution2(LucosAuthRestoreContribution.ID, LucosAuthRestoreContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(LucosAuthCallbackHandler.ID, LucosAuthCallbackHandler, WorkbenchPhase.AfterRestored);
 //#endregion
 
 //#region First-run onboarding (TW-178)

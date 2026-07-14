@@ -14,6 +14,8 @@ export const LucosSettingId = {
 	ContextIgnorePatterns: 'lucos.context.ignorePatterns',
 	/** Base URL of the Lucos cloud gateway, used by the IDE for sign-in (TW-198). */
 	CloudGatewayUrl: 'lucos.cloud.gatewayUrl',
+	/** Google OAuth client ID used to initiate browser-based Google sign-in. */
+	GoogleClientId: 'lucos.cloud.googleClientId',
 	/**
 	 * Auth / feature mode (TW-178 / TW-197).
 	 * - `cloud`      (default) - full experience: sign in once, LLM + semantic search + cloud indexing.
