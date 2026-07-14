@@ -250,7 +250,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package macOS arm64 app
-        run: npm run gulp vscode-darwin-arm64-min-ci
+        run: npm run gulp lucos-darwin-arm64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -431,7 +431,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package macOS x64 app
-        run: npm run gulp vscode-darwin-x64-min-ci
+        run: npm run gulp lucos-darwin-x64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -592,7 +592,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package Windows x64 app
-        run: npm run gulp vscode-win32-x64-min-ci
+        run: npm run gulp lucos-win32-x64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -603,7 +603,7 @@ jobs:
         run: |
           $signFlag = ''
           if ($env:WINDOWS_PFX_DATA -ne '') { $signFlag = '--sign-lucos' }
-          npm run gulp vscode-win32-x64-system-setup -- $signFlag
+          npm run gulp lucos-win32-x64-system-setup -- $signFlag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
@@ -707,7 +707,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package Linux x64 app
-        run: npm run gulp vscode-linux-x64-min-ci
+        run: npm run gulp lucos-linux-x64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -728,8 +728,8 @@ jobs:
       - name: Build .deb package
         if: github.event_name == 'push'
         run: |
-          npm run gulp vscode-linux-x64-prepare-deb
-          npm run gulp vscode-linux-x64-build-deb
+          npm run gulp lucos-linux-x64-prepare-deb
+          npm run gulp lucos-linux-x64-build-deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
