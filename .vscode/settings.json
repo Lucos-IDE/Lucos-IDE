@@ -215,5 +215,9 @@
 		".github/skills/.local": true,
 		".agents/skills/.local": true,
 		".claude/skills/.local": true,
-	}
+	},
+	// --- Lucos local E2E (matches local-daemon/.env LUCOS_GATEWAY_URL) ---
+	"lucos.cloud.gatewayUrl": "http://localhost:3007",
+	"lucos.auth.mode": "cloud",
+	"lucos.agent.permissionMode": "auto"
 }
