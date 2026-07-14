@@ -2,6 +2,8 @@
 	"nameShort": "Lucos",
 	"nameLong": "Lucos",
 	"applicationName": "lucos",
+	"googleClientId": "99735138632-6pf2j7k3ggo7e3klunb3rkglugus0jbm.apps.googleusercontent.com",
+	"lucosGatewayUrl": "https://stagingapi.lucos.com",
 	"dataFolderName": ".lucos",
 	"updateUrl": "https://update.lucos.app",
 	"quality": "stable",
