@@ -56,6 +56,9 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	private _signedInUser: ILucosSignedInUser | undefined;
 	get signedInUser(): ILucosSignedInUser | undefined { return this._signedInUser; }
 
+	readonly restorePromise: Promise<void>;
+	private _resolveRestorePromise: (() => void) | undefined;
+
 	private _pendingGoogleResolve: ((success: boolean) => void) | undefined;
 	private _pendingGoogleNotification: INotificationHandle | undefined;
 	private _pendingGoogleTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -72,6 +75,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
+		this.restorePromise = new Promise<void>(resolve => { this._resolveRestorePromise = resolve; });
 	}
 
 	/** Updates the in-memory signed-in state and fires the change event. */
@@ -130,6 +134,34 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			});
 			return false;
 		}
+	}
+
+	async loginWithEmail(email: string, password: string): Promise<void> {
+		this.logService.info('[LucosAuth] loginWithEmail', `email=${email}`);
+		const auth = await this.authenticate(email, password, 'sign-in');
+		await this.secretStorageService.set(JWT_SECRET_KEY, auth.token);
+		if (auth.userId) { await this.secretStorageService.set(USER_ID_KEY, auth.userId); }
+		await this.secretStorageService.set(USER_EMAIL_KEY, email);
+		try {
+			await this.lucosDaemonService.setCloudCredentials({ accessToken: auth.token, userId: auth.userId, orgId: auth.orgId });
+		} catch (e) {
+			this.logService.warn('[LucosAuth] loginWithEmail: daemon unavailable', e instanceof Error ? e.message : String(e));
+		}
+		this._setSignedIn(true, { userId: auth.userId, email });
+	}
+
+	async register(email: string, password: string, name?: string): Promise<void> {
+		this.logService.info('[LucosAuth] register', `email=${email}`);
+		const auth = await this.authenticate(email, password, 'sign-up', name ? { name } : undefined);
+		await this.secretStorageService.set(JWT_SECRET_KEY, auth.token);
+		if (auth.userId) { await this.secretStorageService.set(USER_ID_KEY, auth.userId); }
+		await this.secretStorageService.set(USER_EMAIL_KEY, email);
+		try {
+			await this.lucosDaemonService.setCloudCredentials({ accessToken: auth.token, userId: auth.userId, orgId: auth.orgId });
+		} catch (e) {
+			this.logService.warn('[LucosAuth] register: daemon unavailable', e instanceof Error ? e.message : String(e));
+		}
+		this._setSignedIn(true, { userId: auth.userId, email });
 	}
 
 	async loginWithGoogle(): Promise<boolean> {
@@ -278,26 +310,32 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	}
 
 	async restore(): Promise<void> {
-		const token = await this.secretStorageService.get(JWT_SECRET_KEY);
-		if (!token) {
-			return;
-		}
-		const userId = await this.secretStorageService.get(USER_ID_KEY);
-		const email = await this.secretStorageService.get(USER_EMAIL_KEY);
-		// Restore in-memory signed-in state from keychain immediately — no daemon needed.
-		this._setSignedIn(true, {
-			userId: userId ?? undefined,
-			email: email ?? undefined,
-		});
 		try {
-			await this.lucosDaemonService.setCloudCredentials({ accessToken: token, userId: userId ?? undefined });
-		} catch {
-			// Daemon may be offline at startup - the status bar reflects the disconnected state,
-			// and restore is retried on next login. Swallow so startup never fails on auth.
+			const token = await this.secretStorageService.get(JWT_SECRET_KEY);
+			if (!token) {
+				return;
+			}
+			const userId = await this.secretStorageService.get(USER_ID_KEY);
+			const email = await this.secretStorageService.get(USER_EMAIL_KEY);
+			// Restore in-memory signed-in state from keychain immediately — no daemon needed.
+			this._setSignedIn(true, {
+				userId: userId ?? undefined,
+				email: email ?? undefined,
+			});
+			try {
+				await this.lucosDaemonService.setCloudCredentials({ accessToken: token, userId: userId ?? undefined });
+			} catch {
+				// Daemon may be offline at startup - the status bar reflects the disconnected state,
+				// and restore is retried on next login. Swallow so startup never fails on auth.
+			}
+		} finally {
+			// Always resolve so anything awaiting restorePromise unblocks regardless of outcome.
+			this._resolveRestorePromise?.();
+			this._resolveRestorePromise = undefined;
 		}
 	}
 
-	private async authenticate(email: string, password: string): Promise<{ token: string; userId?: string; orgId?: string }> {
+	private async authenticate(email: string, password: string, action: 'sign-in' | 'sign-up' = 'sign-in', extras?: Record<string, string>): Promise<{ token: string; userId?: string; orgId?: string }> {
 		const gatewayUrl = ((this.configurationService.getValue<string>(LucosSettingId.CloudGatewayUrl) ?? '').trim()
 			|| (this.productService.lucosGatewayUrl ?? '')).replace(/\/+$/, '');
 		if (!gatewayUrl) {
@@ -310,12 +348,18 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			headers: { 'Content-Type': 'application/json' },
 			// TW-198: the gateway expects a discriminated union keyed on authType,
 			// with `action` for the email flow - not a bare { email, password }.
-			data: JSON.stringify({ authType: 'email', action: 'sign-in', email, password }),
+			data: JSON.stringify({ authType: 'email', action, email, password, ...extras }),
 			callSite: 'lucos.login',
 		}, CancellationToken.None);
 
 		if (!isSuccess(context)) {
-			throw new Error(localize('lucos.login.badStatus', "gateway responded {0}", context.res.statusCode ?? 0));
+			let errMsg = localize('lucos.login.badStatus', "gateway responded {0}", context.res.statusCode ?? 0);
+			try {
+				const errBody = await asJson<{ message?: string; error?: string }>(context);
+				if (errBody?.message) { errMsg = errBody.message; }
+				else if (errBody?.error) { errMsg = errBody.error; }
+			} catch { /* ignore body parse errors */ }
+			throw new Error(errMsg);
 		}
 
 		const body = await asJson<IAuthResponse>(context);
