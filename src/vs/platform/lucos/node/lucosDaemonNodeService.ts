@@ -1,10 +1,8 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — node/main-process daemon service (TW-161). Implements the channel-facing
- *  ILucosDaemonNodeService by driving the raw gRPC client and translating wire types into the
- *  IDE's domain types. Runs in the main process; the renderer reaches it over a ProxyChannel.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type * as grpc from '@grpc/grpc-js';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { Emitter, Event } from '../../../base/common/event.js';
@@ -15,12 +13,14 @@ import { ILucosDaemonNodeService } from '../common/lucosDaemonNode.js';
 import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../common/lucosProtocol.js';
 import { ILucosDaemonEndpoint, LucosGrpcClient } from './lucosGrpcClient.js';
 
+type GrpcReadableStream<T> = import('@grpc/grpc-js').ClientReadableStream<T>;
+
 const HEALTH_POLL_MS = 15_000;
 
 interface ITaskEntry {
 	readonly emitter: Emitter<ITaskEvent>;
-	readonly start: () => grpc.ClientReadableStream<Record<string, unknown>>;
-	stream: grpc.ClientReadableStream<Record<string, unknown>> | undefined;
+	readonly start: () => GrpcReadableStream<Record<string, unknown>>;
+	stream: GrpcReadableStream<Record<string, unknown>> | undefined;
 }
 
 export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNodeService {
@@ -139,7 +139,7 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 
 	// Register a streaming task; start the gRPC stream lazily on first subscription so no events
 	// are dropped between start…() and onDynamicAgentTaskEvent().
-	private beginTask(start: () => grpc.ClientReadableStream<Record<string, unknown>>): string {
+	private beginTask(start: () => GrpcReadableStream<Record<string, unknown>>): string {
 		const taskId = generateUuid();
 		const emitter = new Emitter<ITaskEvent>({ onWillAddFirstListener: () => this.beginStream(taskId) });
 		this.tasks.set(taskId, { emitter, start, stream: undefined });
@@ -161,7 +161,7 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		if (!entry) {
 			return;
 		}
-		let stream: grpc.ClientReadableStream<Record<string, unknown>>;
+		let stream: GrpcReadableStream<Record<string, unknown>>;
 		try {
 			stream = entry.start();
 		} catch (error) {
@@ -196,12 +196,9 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 			this.setConnectionState(LucosConnectionState.Disconnected);
 			return;
 		}
-		try {
-			this.client.connect(endpoint);
-			void this.refreshHealth();
-		} catch {
+		void this.client.connect(endpoint).then(() => this.refreshHealth()).catch(() => {
 			this.setConnectionState(LucosConnectionState.Disconnected);
-		}
+		});
 	}
 
 	private async refreshHealth(): Promise<void> {
@@ -235,9 +232,15 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 function readDaemonEndpoint(): ILucosDaemonEndpoint | undefined {
 	try {
 		const raw = readFileSync(join(homedir(), '.lucos', 'daemon.json'), 'utf8');
-		const json = JSON.parse(raw) as { port?: number; grpc_port?: number; token?: string; session_token?: string; local_session_token?: string };
+		// Daemon writes `local_session_token` (see local-daemon daemoninfo.File); keep legacy aliases.
+		const json = JSON.parse(raw) as {
+			port?: number;
+			grpc_port?: number;
+			token?: string;
+			session_token?: string;
+			local_session_token?: string;
+		};
 		const port = json.grpc_port ?? json.port;
-		// The daemon writes the field as `local_session_token`; keep the older aliases as fallbacks.
 		const token = json.local_session_token ?? json.session_token ?? json.token;
 		if (!port || !token) {
 			return undefined;

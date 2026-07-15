@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { LucosAuthState, LucosTaskEventKind } from '../../../../../platform/lucos/common/lucosProtocol.js';
+import { LucosAuthState, LucosPermissionMode, LucosTaskEventKind } from '../../../../../platform/lucos/common/lucosProtocol.js';
 import { LucosDaemonServiceStub } from '../../browser/lucosDaemonServiceStub.js';
 
 suite('LucosDaemonServiceStub', () => {
@@ -41,6 +41,25 @@ suite('LucosDaemonServiceStub', () => {
 		assert.strictEqual(kinds[0], LucosTaskEventKind.TaskStarted);
 		assert.strictEqual(kinds[kinds.length - 1], LucosTaskEventKind.TaskCompleted);
 		assert.ok(kinds.includes(LucosTaskEventKind.ModelDelta), 'expected at least one model.delta event');
+	});
+
+	test('startAgentTask accepts model and permissionMode on the request', async () => {
+		const service = disposables.add(new LucosDaemonServiceStub());
+		let started = false;
+
+		for await (const event of service.startAgentTask({
+			goal: 'hello',
+			sessionId: 's1',
+			model: 'claude-sonnet-4-6',
+			permissionMode: LucosPermissionMode.Auto,
+		}, CancellationToken.None)) {
+			if (event.kind === LucosTaskEventKind.TaskStarted) {
+				started = true;
+				break;
+			}
+		}
+
+		assert.strictEqual(started, true, 'expected task.started with model/permissionMode request');
 	});
 
 	test('indexWorkspace streams start, progress and completion', async () => {

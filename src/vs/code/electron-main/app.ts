@@ -403,6 +403,23 @@ export class CodeApplication extends Disposable {
 
 		//#endregion
 
+		//#region Allow CORS for the Lucos gateway
+
+		// The workbench renderer (vscode-file://vscode-app) calls the Lucos gateway REST APIs.
+		// Electron's Chromium enforces CORS for that origin, so we inject the necessary
+		// Access-Control headers into gateway responses before the CORS check runs.
+		session.defaultSession.webRequest.onHeadersReceived({ urls: ['https://*.lucos.com/*', 'http://localhost:*/*'] }, (details, callback) => {
+			const responseHeaders = details.responseHeaders ?? Object.create(null);
+
+			responseHeaders['Access-Control-Allow-Origin'] = ['*'];
+			responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
+			responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization'];
+
+			return callback({ cancel: false, responseHeaders });
+		});
+
+		//#endregion
+
 		//#region Allow CORS for the PRSS CDN
 
 		// https://github.com/microsoft/vscode-remote-release/issues/9246

@@ -27,7 +27,7 @@ import { LucosAuthService } from './lucosAuthService.js';
 import { LucosIndexService } from './lucosIndexService.js';
 import { LucosChatViewPane } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
-import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction } from './lucosLoginActions.js';
+import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosGoogleLoginAction } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
 import { LucosShowStatusAction } from './lucosStatusActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
@@ -35,6 +35,7 @@ import { LucosFirstRunContribution } from './lucosFirstRunContribution.js';
 import { LucosWorkspaceIndexWatcher } from './lucosWorkspaceIndexWatcher.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 import { LucosAuthModeService } from './lucosAuthModeService.js';
+import { LucosAuthCallbackHandler } from './lucosAuthCallbackHandler.js';
 
 //#region Services
 // The daemon service is bound per-platform: desktop -> real gRPC client
@@ -72,6 +73,17 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			markdownDescription: localize('lucos.agent.model', "Default model for Lucos chat and edits. The available set is ultimately gated by your plan."),
 			tags: ['lucos'],
 		},
+		[LucosSettingId.AgentPermissionMode]: {
+			type: 'string',
+			default: 'auto',
+			enum: ['auto', 'manual'],
+			enumDescriptions: [
+				localize('lucos.agent.permissionMode.auto', "Auto-approve safe tools (read, search); patches still require review in the IDE."),
+				localize('lucos.agent.permissionMode.manual', "Require explicit approval for risky tools before execution."),
+			],
+			markdownDescription: localize('lucos.agent.permissionMode', "How the daemon handles tool permission prompts for agent tasks."),
+			tags: ['lucos'],
+		},
 		[LucosSettingId.ChatStreaming]: {
 			type: 'boolean',
 			default: true,
@@ -87,9 +99,16 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		},
 		[LucosSettingId.CloudGatewayUrl]: {
 			type: 'string',
-			default: 'https://api.lucos.com',
+			default: 'https://stagingapi.lucos.com',
 			scope: ConfigurationScope.MACHINE,
 			markdownDescription: localize('lucos.cloud.gatewayUrl', "Base URL of the Lucos cloud gateway used for sign-in."),
+			tags: ['lucos'],
+		},
+		[LucosSettingId.GoogleClientId]: {
+			type: 'string',
+			default: '',
+			scope: ConfigurationScope.MACHINE,
+			markdownDescription: localize('lucos.cloud.googleClientId', "Google OAuth client ID for **Sign In with Google**. Obtain this from your Google Cloud Console and set it here to enable Google login."),
 			tags: ['lucos'],
 		},
 		[LucosSettingId.AuthMode]: {
@@ -111,15 +130,16 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 //#region Activity Bar view container + view (TW-158)
 const lucosViewIcon = registerIcon('lucos-view-icon', Codicon.sparkle, localize('lucos.viewIcon', "View icon of the Lucos AI view."));
 
+// LUCOS_FORK: Lucos owns the default AuxiliaryBar chat slot (Copilot panel registration is commented out).
 const viewContainer: ViewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
 	id: LUCOS_VIEW_CONTAINER_ID,
-	title: localize2('lucos', "Lucos AI"),
+	title: localize2('lucos', "Chat"),
 	icon: lucosViewIcon,
-	order: 6,
+	order: 1,
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [LUCOS_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 	storageId: LUCOS_VIEW_CONTAINER_ID,
 	hideIfEmpty: false,
-}, ViewContainerLocation.Sidebar, { doNotRegisterOpenCommand: true });
+}, ViewContainerLocation.AuxiliaryBar, { isDefault: true, doNotRegisterOpenCommand: true });
 
 Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews([{
 	id: LucosChatViewPane.ID,
@@ -131,10 +151,11 @@ Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews
 	// The focus command (TW-158) + its keybinding come for free from this descriptor.
 	openCommandActionDescriptor: {
 		id: LUCOS_FOCUS_CHAT_COMMAND_ID,
-		mnemonicTitle: localize({ key: 'miLucos', comment: ['&& denotes a mnemonic'] }, "&&Lucos AI"),
-		// TODO(TW-158): ticket specifies Cmd/Ctrl+Shift+A - verify it does not collide with an
-		// existing default binding before finalising.
-		keybindings: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyA },
+		mnemonicTitle: localize({ key: 'miLucos', comment: ['&& denotes a mnemonic'] }, "&&Chat"),
+		keybindings: {
+			primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI,
+			mac: { primary: KeyMod.CtrlCmd | KeyMod.WinCtrl | KeyCode.KeyI },
+		},
 		order: 1,
 	},
 }], viewContainer);
@@ -147,7 +168,9 @@ registerWorkbenchContribution2(LucosStatusBarContribution.ID, LucosStatusBarCont
 //#region Auth (TW-198)
 registerAction2(LucosLoginAction);
 registerAction2(LucosLogoutAction);
+registerAction2(LucosGoogleLoginAction);
 registerWorkbenchContribution2(LucosAuthRestoreContribution.ID, LucosAuthRestoreContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(LucosAuthCallbackHandler.ID, LucosAuthCallbackHandler, WorkbenchPhase.AfterRestored);
 //#endregion
 
 //#region First-run onboarding (TW-178)

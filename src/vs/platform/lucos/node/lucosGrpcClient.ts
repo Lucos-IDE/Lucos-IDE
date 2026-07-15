@@ -1,20 +1,33 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — raw gRPC client to the local daemon (TW-161). NODE layer only.
- *
- *  The daemon writes its address + rotating session token to `~/.lucos/daemon.json`; every call
- *  carries `authorization: Bearer <token>` metadata. The proto is embedded and materialised to a
- *  temp dir so no build-time asset copying is required (switch to codegen later if preferred).
- *
- *  NOTE: runtime behaviour needs validation with a live daemon + a working native build — this
- *  file typechecks but has not been exercised end-to-end.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as grpc from '@grpc/grpc-js';
-import * as protoLoader from '@grpc/proto-loader';
 import { mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { dirname, join } from '../../../base/common/path.js';
+import { LUCOS_IDE_EMBEDDED_PROTO } from './lucosEmbeddedProto.js';
+
+type GrpcModule = typeof import('@grpc/grpc-js');
+type ProtoLoaderModule = typeof import('@grpc/proto-loader');
+type GrpcClient = import('@grpc/grpc-js').Client & Record<string, Function>;
+type GrpcMetadata = import('@grpc/grpc-js').Metadata;
+type GrpcServiceError = import('@grpc/grpc-js').ServiceError;
+type GrpcReadableStream<T> = import('@grpc/grpc-js').ClientReadableStream<T>;
+
+let grpcModulePromise: Promise<GrpcModule> | undefined;
+let protoLoaderModulePromise: Promise<ProtoLoaderModule> | undefined;
+
+function getGrpcModule(): Promise<GrpcModule> {
+	grpcModulePromise ??= import('@grpc/grpc-js');
+	return grpcModulePromise;
+}
+
+function getProtoLoaderModule(): Promise<ProtoLoaderModule> {
+	protoLoaderModulePromise ??= import('@grpc/proto-loader');
+	return protoLoaderModulePromise;
+}
 
 export interface ILucosDaemonEndpoint {
 	/** `host:port`, e.g. `127.0.0.1:50051`. */
@@ -24,170 +37,7 @@ export interface ILucosDaemonEndpoint {
 }
 
 /** Trimmed to the RPCs the IDE currently calls; the daemon service is a superset (that's fine for gRPC). */
-const AGENT_PROTO = `
-syntax = "proto3";
-package lucos.v1;
-import "google/protobuf/timestamp.proto";
-
-service LucosDaemon {
-  rpc Health(HealthRequest) returns (HealthResponse);
-  rpc GetAuthStatus(AuthStatusRequest) returns (AuthStatusResponse);
-  rpc SetCloudCredentials(SetCloudCredentialsRequest) returns (SetCloudCredentialsResponse);
-  rpc ClearCloudCredentials(ClearCloudCredentialsRequest) returns (ClearCloudCredentialsResponse);
-  rpc StartAgentTask(StartAgentTaskRequest) returns (stream TaskEvent);
-  rpc GetPendingPatch(GetPendingPatchRequest) returns (PatchProposal);
-  rpc ApplyPatch(ApplyPatchRequest) returns (ApplyPatchResponse);
-  rpc RejectPatch(RejectPatchRequest) returns (RejectPatchResponse);
-  rpc ListCustomizations(ListCustomizationsRequest) returns (CustomizationsSnapshot);
-  rpc IndexWorkspace(IndexWorkspaceRequest) returns (stream TaskEvent);
-}
-
-message HealthRequest {}
-message HealthResponse { bool serving = 1; string version = 2; }
-
-enum AuthState {
-  AUTH_STATE_UNSPECIFIED = 0;
-  AUTH_STATE_UNAUTHENTICATED = 1;
-  AUTH_STATE_AUTHENTICATING = 2;
-  AUTH_STATE_AUTHENTICATED = 3;
-  AUTH_STATE_TOKEN_EXPIRED = 4;
-  AUTH_STATE_CLOUD_UNREACHABLE = 5;
-  AUTH_STATE_OFFLINE_MODE = 6;
-}
-
-message AuthStatusRequest {}
-message AuthStatusResponse {
-  AuthState state = 1;
-  string user_id = 2;
-  string org_id = 3;
-  string plan_code = 4;
-  repeated string roles = 5;
-  bool cloud_reachable = 6;
-  google.protobuf.Timestamp token_expires_at = 7;
-}
-
-message SetCloudCredentialsRequest {
-  string access_token = 1;
-  google.protobuf.Timestamp expires_at = 2;
-  string user_id = 3;
-  string org_id = 4;
-}
-message SetCloudCredentialsResponse { AuthStatusResponse status = 1; }
-
-message ClearCloudCredentialsRequest {}
-message ClearCloudCredentialsResponse { AuthStatusResponse status = 1; }
-
-message StartAgentTaskRequest {
-  string goal = 1;
-  string workspace_id = 2;
-  string active_file = 3;
-  string selection = 4;
-  repeated string open_buffers = 5;
-  string permission_mode = 6;
-  string model = 7;
-  string session_id = 8;
-  string selected_agent_path = 9;
-  string workspace_root = 10;
-}
-
-message TaskEvent {
-  string task_id = 1;
-  string event_type = 2;
-  int64 sequence = 3;
-  google.protobuf.Timestamp timestamp = 4;
-  string payload_json = 5;
-  string severity = 6;
-}
-
-message FileChange {
-  string path = 1;
-  string old_text = 2;
-  string new_text = 3;
-  string base_hash = 4;
-}
-
-message PatchProposal {
-  string patch_id = 1;
-  string task_id = 2;
-  string summary = 3;
-  repeated FileChange file_changes = 4;
-  string status = 5;
-}
-
-message GetPendingPatchRequest { string patch_id = 1; }
-
-message ApplyPatchRequest {
-  string patch_id = 1;
-  string workspace_root = 2;
-}
-
-message ApplyPatchResponse {
-  string patch_id = 1;
-  repeated string files_changed = 2;
-  repeated string created = 3;
-  repeated string modified = 4;
-  repeated string deleted = 5;
-}
-
-message RejectPatchRequest { string patch_id = 1; }
-message RejectPatchResponse { string patch_id = 1; }
-
-message ListCustomizationsRequest { string workspace_root = 1; }
-
-message SkillEntry {
-  string name = 1;
-  string description = 2;
-  string path = 3;
-  string scope = 4;
-  repeated string allowed_tools = 5;
-  bool user_invocable = 6;
-  bool disable_model_invocation = 7;
-  string content_hash = 8;
-}
-
-message AgentEntry {
-  string name = 1;
-  string display_name = 2;
-  string description = 3;
-  string path = 4;
-  string scope = 5;
-  repeated string tools = 6;
-  string model = 7;
-  bool user_invocable = 8;
-  bool disable_model_invocation = 9;
-  string content_hash = 10;
-}
-
-message InstructionEntry {
-  string path = 1;
-  string scope = 2;
-  string content_hash = 3;
-  string name = 4;
-  string description = 5;
-  repeated string apply_to = 6;
-}
-
-message RepoRuleEntry {
-  string path = 1;
-  string kind = 2;
-  string content_hash = 3;
-}
-
-message CustomizationsSnapshot {
-  repeated SkillEntry skills = 1;
-  repeated AgentEntry agents = 2;
-  repeated InstructionEntry instructions = 3;
-  repeated RepoRuleEntry repo_rules = 4;
-  google.protobuf.Timestamp scanned_at = 5;
-}
-
-message IndexWorkspaceRequest {
-  string workspace_root = 1;
-  string workspace_id = 2;
-  bool force_rescan = 3;
-  repeated string ignore_patterns = 4;
-}
-`;
+const AGENT_PROTO = LUCOS_IDE_EMBEDDED_PROTO;
 
 const TIMESTAMP_PROTO = `
 syntax = "proto3";
@@ -213,10 +63,12 @@ function ensureProtoOnDisk(): string {
 
 export class LucosGrpcClient extends Disposable {
 
-	private client: grpc.Client & Record<string, Function> | undefined;
+	private grpc: GrpcModule | undefined;
+	private client: GrpcClient | undefined;
 	private token = '';
 
-	connect(endpoint: ILucosDaemonEndpoint): void {
+	async connect(endpoint: ILucosDaemonEndpoint): Promise<void> {
+		const [grpc, protoLoader] = await Promise.all([getGrpcModule(), getProtoLoaderModule()]);
 		const protoPath = ensureProtoOnDisk();
 		const definition = protoLoader.loadSync(protoPath, {
 			keepCase: false,
@@ -227,9 +79,10 @@ export class LucosGrpcClient extends Disposable {
 			includeDirs: [dirname(protoPath)],
 		});
 		const pkg = grpc.loadPackageDefinition(definition) as unknown as {
-			lucos: { v1: { LucosDaemon: new (address: string, creds: grpc.ChannelCredentials) => grpc.Client & Record<string, Function> } };
+			lucos: { v1: { LucosDaemon: new (address: string, creds: import('@grpc/grpc-js').ChannelCredentials) => GrpcClient } };
 		};
 		this.close();
+		this.grpc = grpc;
 		this.client = new pkg.lucos.v1.LucosDaemon(endpoint.address, grpc.credentials.createInsecure());
 		this.token = endpoint.token;
 	}
@@ -270,14 +123,14 @@ export class LucosGrpcClient extends Disposable {
 		return this.unary('listCustomizations', request);
 	}
 
-	startAgentTask(request: Record<string, unknown>): grpc.ClientReadableStream<Record<string, unknown>> {
+	startAgentTask(request: Record<string, unknown>): GrpcReadableStream<Record<string, unknown>> {
 		if (!this.client) {
 			throw new Error('Lucos daemon not connected');
 		}
 		return this.client.startAgentTask(request, this.metadata());
 	}
 
-	indexWorkspace(request: Record<string, unknown>): grpc.ClientReadableStream<Record<string, unknown>> {
+	indexWorkspace(request: Record<string, unknown>): GrpcReadableStream<Record<string, unknown>> {
 		if (!this.client) {
 			throw new Error('Lucos daemon not connected');
 		}
@@ -298,8 +151,11 @@ export class LucosGrpcClient extends Disposable {
 		super.dispose();
 	}
 
-	private metadata(): grpc.Metadata {
-		const metadata = new grpc.Metadata();
+	private metadata(): GrpcMetadata {
+		if (!this.grpc) {
+			throw new Error('Lucos daemon not connected');
+		}
+		const metadata = new this.grpc.Metadata();
 		metadata.add('authorization', `Bearer ${this.token}`);
 		return metadata;
 	}
@@ -310,7 +166,7 @@ export class LucosGrpcClient extends Disposable {
 				reject(new Error('Lucos daemon not connected'));
 				return;
 			}
-			this.client[method](request, this.metadata(), (error: grpc.ServiceError | null, response: T) => {
+			this.client[method](request, this.metadata(), (error: GrpcServiceError | null, response: T) => {
 				if (error) {
 					reject(error);
 				} else {

@@ -8,12 +8,16 @@ export const LucosSettingId = {
 	AgentUrl: 'lucos.agent.url',
 	/** Default model for chat/edits; the available set is ultimately gated by the user's plan. */
 	AgentModel: 'lucos.agent.model',
+	/** Permission mode for risky tools: auto-approve safe reads, manual for patches/commands. */
+	AgentPermissionMode: 'lucos.agent.permissionMode',
 	/** Stream assistant responses token-by-token. */
 	ChatStreaming: 'lucos.chat.streaming',
 	/** Globs excluded from `@file`/`@folder` context (TW-164) and local indexing. */
 	ContextIgnorePatterns: 'lucos.context.ignorePatterns',
 	/** Base URL of the Lucos cloud gateway, used by the IDE for sign-in (TW-198). */
 	CloudGatewayUrl: 'lucos.cloud.gatewayUrl',
+	/** Google OAuth client ID used to initiate browser-based Google sign-in. */
+	GoogleClientId: 'lucos.cloud.googleClientId',
 	/**
 	 * Auth / feature mode (TW-178 / TW-197).
 	 * - `cloud`      (default) - full experience: sign in once, LLM + semantic search + cloud indexing.
@@ -29,6 +33,7 @@ export type LucosSettingId = typeof LucosSettingId[keyof typeof LucosSettingId];
 export interface ILucosConfiguration {
 	readonly agentUrl: string;
 	readonly agentModel: string;
+	readonly agentPermissionMode: 'auto' | 'manual';
 	readonly chatStreaming: boolean;
 	readonly contextIgnorePatterns: readonly string[];
 	readonly cloudGatewayUrl: string;
