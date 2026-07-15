@@ -129,15 +129,16 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 //#region Activity Bar view container + view (TW-158)
 const lucosViewIcon = registerIcon('lucos-view-icon', Codicon.sparkle, localize('lucos.viewIcon', "View icon of the Lucos AI view."));
 
+// LUCOS_FORK: Lucos owns the default AuxiliaryBar chat slot (Copilot panel registration is commented out).
 const viewContainer: ViewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
 	id: LUCOS_VIEW_CONTAINER_ID,
-	title: localize2('lucos', "Lucos AI"),
+	title: localize2('lucos', "Chat"),
 	icon: lucosViewIcon,
-	order: 6,
+	order: 1,
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [LUCOS_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 	storageId: LUCOS_VIEW_CONTAINER_ID,
 	hideIfEmpty: false,
-}, ViewContainerLocation.Sidebar, { doNotRegisterOpenCommand: true });
+}, ViewContainerLocation.AuxiliaryBar, { isDefault: true, doNotRegisterOpenCommand: true });
 
 Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews([{
 	id: LucosChatViewPane.ID,
@@ -149,10 +150,11 @@ Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews
 	// The focus command (TW-158) + its keybinding come for free from this descriptor.
 	openCommandActionDescriptor: {
 		id: LUCOS_FOCUS_CHAT_COMMAND_ID,
-		mnemonicTitle: localize({ key: 'miLucos', comment: ['&& denotes a mnemonic'] }, "&&Lucos AI"),
-		// TODO(TW-158): ticket specifies Cmd/Ctrl+Shift+A - verify it does not collide with an
-		// existing default binding before finalising.
-		keybindings: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyA },
+		mnemonicTitle: localize({ key: 'miLucos', comment: ['&& denotes a mnemonic'] }, "&&Chat"),
+		keybindings: {
+			primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI,
+			mac: { primary: KeyMod.CtrlCmd | KeyMod.WinCtrl | KeyCode.KeyI },
+		},
 		order: 1,
 	},
 }], viewContainer);

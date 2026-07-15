@@ -21,16 +21,27 @@ export class LucosActivityTimeline extends Disposable {
 	private readonly activeEntry: HTMLElement;
 	private readonly hideScheduler: RunOnceScheduler;
 	private activeToolCount = 0;
+	private mountedParent: HTMLElement | undefined;
 
-	constructor(parent: HTMLElement) {
+	constructor() {
 		super();
-		this.container = dom.append(parent, dom.$('.lucos-timeline'));
-		this.container.style.display = 'none';
-		this.container.style.padding = '4px 8px';
-		this.container.style.fontSize = '0.9em';
-		this.container.style.opacity = '0.75';
+		this.container = dom.$('.lucos-timeline');
 		this.activeEntry = dom.append(this.container, dom.$('.lucos-timeline-entry'));
 		this.hideScheduler = this._register(new RunOnceScheduler(() => this.hide(), HIDE_DELAY_MS));
+	}
+
+	mountTo(parent: HTMLElement): void {
+		if (this.mountedParent === parent) {
+			return;
+		}
+		this.unmount();
+		parent.appendChild(this.container);
+		this.mountedParent = parent;
+	}
+
+	unmount(): void {
+		this.container.remove();
+		this.mountedParent = undefined;
 	}
 
 	handleEvent(event: ITaskEvent): void {
@@ -90,12 +101,12 @@ export class LucosActivityTimeline extends Disposable {
 	}
 
 	private show(label: string): void {
-		this.container.style.display = 'block';
+		this.container.classList.add('visible');
 		this.activeEntry.textContent = `⋯ ${label}`;
 	}
 
 	private hide(): void {
-		this.container.style.display = 'none';
+		this.container.classList.remove('visible');
 		this.activeEntry.textContent = '';
 	}
 }

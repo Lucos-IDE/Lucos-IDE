@@ -26,32 +26,20 @@ export class LucosPatchReview extends Disposable {
 
 	render(container: HTMLElement, patch: ILucosPatchProposal, onResolved?: () => void): void {
 		dom.clearNode(container);
-		container.style.display = 'block';
+		container.classList.add('visible');
 
 		const card = dom.append(container, dom.$('.lucos-patch-card'));
-		card.style.margin = '8px 0';
-		card.style.padding = '8px';
-		card.style.border = '1px solid var(--vscode-panel-border)';
-		card.style.borderRadius = '4px';
 
 		const title = dom.append(card, dom.$('.lucos-patch-title'));
 		title.textContent = patch.summary || localize('lucos.patch.proposed', "Proposed changes");
-		title.style.fontWeight = '600';
-		title.style.marginBottom = '4px';
 
 		for (const change of patch.fileChanges) {
 			const link = dom.append(card, dom.$('a.lucos-patch-file')) as HTMLAnchorElement;
 			link.textContent = change.path;
-			link.style.display = 'block';
-			link.style.cursor = 'pointer';
-			link.style.textDecoration = 'underline';
 			this._register(dom.addDisposableListener(link, 'click', () => void this.openDiff(change)));
 		}
 
 		const actions = dom.append(card, dom.$('.lucos-patch-actions'));
-		actions.style.marginTop = '6px';
-		actions.style.display = 'flex';
-		actions.style.gap = '6px';
 
 		const acceptButton = dom.append(actions, dom.$('button.lucos-patch-accept')) as HTMLButtonElement;
 		acceptButton.textContent = localize('lucos.patch.accept', "Accept");

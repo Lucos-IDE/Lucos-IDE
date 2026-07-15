@@ -4,23 +4,29 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { coalesce, isNonEmptyArray } from '../../../../base/common/arrays.js';
-import { Codicon } from '../../../../base/common/codicons.js';
+// LUCOS_FORK: unused while Copilot chat panel registration is commented out below — restore with that block.
+// import { Codicon } from '../../../../base/common/codicons.js';
 import { toErrorMessage } from '../../../../base/common/errorMessage.js';
 import { Event } from '../../../../base/common/event.js';
 import { createCommandUri, MarkdownString } from '../../../../base/common/htmlContent.js';
-import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
+// LUCOS_FORK: unused while Copilot chat panel registration is commented out below — restore with that block.
+// import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { Disposable, DisposableMap, DisposableStore } from '../../../../base/common/lifecycle.js';
 import * as strings from '../../../../base/common/strings.js';
-import { localize, localize2 } from '../../../../nls.js';
-import { ContextKeyExpr, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { localize } from '../../../../nls.js';
+// LUCOS_FORK: localize2 unused while Copilot chat panel registration is commented out — restore with that block.
+// LUCOS_FORK: ContextKeyExpr unused while Copilot chat panel registration is commented out — restore with that block.
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { ExtensionIdentifier, IExtensionManifest } from '../../../../platform/extensions/common/extensions.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
-import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
+// LUCOS_FORK: unused while Copilot chat panel registration is commented out below — restore with that block.
+// import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+// import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
-import { IViewContainersRegistry, IViewDescriptor, IViewsRegistry, ViewContainer, ViewContainerLocation, Extensions as ViewExtensions } from '../../../common/views.js';
+// LUCOS_FORK: trimmed view-container imports while Copilot panel is hidden — restore IViewContainersRegistry, IViewDescriptor, ViewContainer, ViewContainerLocation with that block.
+import { IViewsRegistry, Extensions as ViewExtensions } from '../../../common/views.js';
 import { Extensions, IExtensionFeaturesRegistry, IExtensionFeatureTableRenderer, IRenderedData, IRowData, ITableData } from '../../../services/extensionManagement/common/extensionFeatures.js';
 import { isProposedApiEnabled } from '../../../services/extensions/common/extensions.js';
 import * as extensionsRegistry from '../../../services/extensions/common/extensionsRegistry.js';
@@ -30,11 +36,15 @@ import { IChatAgentData, IChatAgentService } from '../common/participants/chatAg
 import { ChatContextKeys } from '../common/actions/chatContextKeys.js';
 import { IRawChatParticipantContribution } from '../common/participants/chatParticipantContribTypes.js';
 import { ChatAgentLocation, ChatModeKind } from '../common/constants.js';
-import { ChatViewId, ChatViewContainerId } from './chat.js';
-import { ChatViewPane } from './widgetHosts/viewPane/chatViewPane.js';
+import { ChatViewId } from './chat.js';
+// LUCOS_FORK: ChatViewContainerId / ChatViewPane unused while Copilot chat panel is hidden — restore with that block.
+// import { ChatViewContainerId } from './chat.js';
+// import { ChatViewPane } from './widgetHosts/viewPane/chatViewPane.js';
 
 // --- Chat Container &  View Registration
-
+// LUCOS_FORK: Hide VS Code Copilot Chat auxiliary-bar panel (Lucos owns chat UI).
+// Restore by uncommenting chatViewIcon, chatViewContainer, chatViewDescriptor, registerViews, and the imports marked LUCOS_FORK above.
+/*
 const chatViewIcon = registerIcon('chat-view-icon', Codicon.chatSparkle, localize('chatViewIcon', 'View icon of the chat view.'));
 
 const chatViewContainer: ViewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
@@ -81,6 +91,7 @@ const chatViewDescriptor: IViewDescriptor = {
 	)
 };
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([chatViewDescriptor], chatViewContainer);
+*/
 
 const chatParticipantExtensionPoint = extensionsRegistry.ExtensionsRegistry.registerExtensionPoint<IRawChatParticipantContribution[]>({
 	extensionPoint: 'chatParticipants',
