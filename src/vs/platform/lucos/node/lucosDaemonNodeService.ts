@@ -235,9 +235,10 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 function readDaemonEndpoint(): ILucosDaemonEndpoint | undefined {
 	try {
 		const raw = readFileSync(join(homedir(), '.lucos', 'daemon.json'), 'utf8');
-		const json = JSON.parse(raw) as { port?: number; grpc_port?: number; token?: string; session_token?: string };
+		const json = JSON.parse(raw) as { port?: number; grpc_port?: number; token?: string; session_token?: string; local_session_token?: string };
 		const port = json.grpc_port ?? json.port;
-		const token = json.session_token ?? json.token;
+		// The daemon writes the field as `local_session_token`; keep the older aliases as fallbacks.
+		const token = json.local_session_token ?? json.session_token ?? json.token;
 		if (!port || !token) {
 			return undefined;
 		}

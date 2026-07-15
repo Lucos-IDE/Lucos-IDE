@@ -29,6 +29,7 @@ import { LucosChatViewPane } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
 import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
+import { LucosShowStatusAction } from './lucosStatusActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
 import { LucosFirstRunContribution } from './lucosFirstRunContribution.js';
 import { LucosWorkspaceIndexWatcher } from './lucosWorkspaceIndexWatcher.js';
@@ -167,6 +168,10 @@ registerAction2(LucosGenerateTestsAction);
 registerAction2(LucosReviewChangesAction);
 registerAction2(LucosSelectCustomizationAction);
 registerAction2(LucosIndexWorkspaceAction);
+//#endregion
+
+//#region Lucos view gear -> status popover (indexing status + metadata)
+registerAction2(LucosShowStatusAction);
 //#endregion
 
 //#region Notifications (TW-170)
