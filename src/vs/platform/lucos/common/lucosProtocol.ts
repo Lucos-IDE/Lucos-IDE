@@ -1,10 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — shared protocol/contract types mirroring the Lucos daemon gRPC surface
- *  (proto package `lucos.v1`, service `LucosDaemon`).
- *
- *  These live in `platform/` because they are shared across the IPC boundary: the main-process
- *  node service and the renderer both depend on them, and only `platform`/`base`/`common` are
- *  importable from both sides.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 /** Transport connection state between the IDE and the local Lucos daemon. */

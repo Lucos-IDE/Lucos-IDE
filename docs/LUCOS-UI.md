@@ -102,7 +102,7 @@ src/vs/workbench/contrib/lucos/                ← the UI
 | **TW-172** Error Handling | `lucosViewPane.ts` (offline banner + auth/quota events), `lucosIndexService.ts` (`index.failed`) |
 | **TW-220** Index Workspace | `common/lucosIndexService.ts`, `browser/lucosIndexService.ts`, `lucosEditorActions.ts` (`LucosIndexWorkspaceAction`), `indexWorkspace` across all daemon layers (`lucosProtocol.ts`, `lucosGrpcClient.ts`, `lucosDaemonNode.ts`, `lucosDaemonNodeService.ts`, `lucosDaemonServiceRemote.ts`, `lucosDaemonServiceStub.ts`, `lucosDaemonService.ts`) |
 | **TW-173** UI Performance | `lucosViewPane.ts` (rAF-batched streaming updates) |
-| **TW-174** Testing | `test/browser/lucosDaemonServiceStub.test.ts` |
+| **TW-174** Testing | `test/browser/lucosDaemonServiceStub.test.ts`, `platform/lucos/test/node/lucosProtoDrift.test.ts` |
 | **TW-184** Customizations | `lucosEditorActions.ts` (`LucosSelectCustomizationAction`) + `listCustomizations` across daemon layers |
 | **TW-198** Login | `common/lucosAuthService.ts`, `browser/lucosAuthService.ts`, `lucosLoginActions.ts` |
 
@@ -133,18 +133,23 @@ Index task-event kinds (from `IndexWorkspace`, folded by `ILucosIndexService`): 
 
 ## Runtime-validation checklist
 
-Everything below is typecheck-verified but **not runtime-tested**. Once the native build is fixed
-(TW-155) and the daemon is running (`make dev` in `local-daemon`), verify:
+Everything below is typecheck-verified; daemon-dependent paths have **unit/integration tests** plus a
+local E2E runbook. Once the native build is fixed (TW-155) and the daemon is running, verify manually:
 
 **Local dev pre-reqs**
 - Start the daemon: `make dev` — it writes `~/.lucos/daemon.json` (`grpc_port`, `local_session_token`).
+- For agent chat without cloud `/api/v1/agent/turn`: `LUCOS_AGENT_TURN=mock make dev` in `local-daemon`.
 - Point sign-in at the local gateway (TW-168): set `lucos.cloud.gatewayUrl` to `http://localhost:3007`
   (the setting defaults to the prod `https://stagingapi.lucos.com`; the daemon's own `LUCOS_GATEWAY_URL`
   is set via `local-daemon/.env`).
+- Full indexing E2E: see [`docs/lucos-indexing-e2e-local.md`](../../docs/lucos-indexing-e2e-local.md).
+- Full IDE↔daemon chat E2E (mock turn, read/create/edit, patch review): see
+  [`docs/lucos-ide-daemon-e2e-local.md`](../../docs/lucos-ide-daemon-e2e-local.md).
 
 - [ ] Fork builds & launches (`npm install` succeeds, `./scripts/code.sh` opens) — **blocked on TW-155 (native modules)**
 - [ ] Lucos icon appears in the Activity Bar; `Ctrl/Cmd+Shift+A` focuses the chat view
 - [ ] Settings show under "Lucos AI"; changing the model updates the status bar
+- [x] `lucos.agent.model` and `lucos.agent.permissionMode` are sent on `StartAgentTask` (chat view)
 - [ ] Status bar shows Connected + model when the daemon is up; Offline when it's down
 - [ ] Sign in (TW-198) → gateway `POST /api/v1/auth/authenticate` with `{authType:'email', action:'sign-in', …}`
       returns a token → JWT lands in OS keychain → daemon `SetCloudCredentials` → status flips to authenticated
@@ -164,7 +169,9 @@ Everything below is typecheck-verified but **not runtime-tested**. Once the nati
 - [ ] **Index failure (TW-172):** trigger a failure (e.g. sign out / no entitlement) → status bar shows
       `· index failed`, tooltip carries the message, and an error notification fires
 - [ ] Kill the daemon mid-session → offline banner + debounced offline notification; restart → reconnects
-- [ ] `npm run test-node --grep LucosDaemonServiceStub` passes
+- [x] `npm run test-browser --grep LucosDaemonServiceStub` passes (model/permissionMode + stream shape)
+- [x] Daemon: `GOWORK=off go test ./internal/agentturn/ ./internal/agent/ ./internal/server/` passes
+- [x] Proto anti-drift test: `platform/lucos/test/node/lucosProtoDrift.test.ts` (requires Node 24+ for `test-node`)
 
 ---
 
@@ -175,9 +182,8 @@ Everything below is typecheck-verified but **not runtime-tested**. Once the nati
 - **Markdown rendering** in chat — currently plain text; add `markdown-it`/Shiki (TW-159,
   `lucosViewPane.ts`).
 - **Chat virtualization** — rAF batching is in; large-conversation virtualization is not (TW-173).
-- **Proto bundling** — the daemon proto is embedded + written to a temp dir at runtime; consider
-  static codegen or a shared `lucos-proto` package to stay in sync with the daemon
-  (`platform/lucos/node/lucosGrpcClient.ts`).
+- **Proto bundling** — canonical subset lives in `platform/lucos/node/lucosEmbeddedProto.ts`; drift
+  guarded by `platform/lucos/test/node/lucosProtoDrift.test.ts`. Consider shared `lucos-proto` package later.
 - **Native diff** uses in-memory `contents` inputs; a registered content provider would allow
   lazy/shared models if needed later.
 

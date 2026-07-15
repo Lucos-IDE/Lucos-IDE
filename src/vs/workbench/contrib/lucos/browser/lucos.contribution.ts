@@ -31,6 +31,7 @@ import { LucosChatViewPane } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
 import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosResetAuthAction, LucosGoogleLoginAction, LucosSignInTitleBarAction, LucosSignOutContextContribution } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
+import { LucosShowStatusAction } from './lucosStatusActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
 // import { LucosSignInOnStartupContribution } from './lucosFirstRunContribution.js';
 import { LucosSignInEditorInput } from './lucosSignInEditorInput.js';
@@ -75,6 +76,17 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: 'claude-sonnet-4-6',
 			enum: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
 			markdownDescription: localize('lucos.agent.model', "Default model for Lucos chat and edits. The available set is ultimately gated by your plan."),
+			tags: ['lucos'],
+		},
+		[LucosSettingId.AgentPermissionMode]: {
+			type: 'string',
+			default: 'auto',
+			enum: ['auto', 'manual'],
+			enumDescriptions: [
+				localize('lucos.agent.permissionMode.auto', "Auto-approve safe tools (read, search); patches still require review in the IDE."),
+				localize('lucos.agent.permissionMode.manual', "Require explicit approval for risky tools before execution."),
+			],
+			markdownDescription: localize('lucos.agent.permissionMode', "How the daemon handles tool permission prompts for agent tasks."),
 			tags: ['lucos'],
 		},
 		[LucosSettingId.ChatStreaming]: {
@@ -123,15 +135,16 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 //#region Activity Bar view container + view (TW-158)
 const lucosViewIcon = registerIcon('lucos-view-icon', Codicon.sparkle, localize('lucos.viewIcon', "View icon of the Lucos AI view."));
 
+// LUCOS_FORK: Lucos owns the default AuxiliaryBar chat slot (Copilot panel registration is commented out).
 const viewContainer: ViewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
 	id: LUCOS_VIEW_CONTAINER_ID,
-	title: localize2('lucos', "Lucos AI"),
+	title: localize2('lucos', "Chat"),
 	icon: lucosViewIcon,
-	order: 6,
+	order: 1,
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [LUCOS_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 	storageId: LUCOS_VIEW_CONTAINER_ID,
 	hideIfEmpty: false,
-}, ViewContainerLocation.Sidebar, { doNotRegisterOpenCommand: true });
+}, ViewContainerLocation.AuxiliaryBar, { isDefault: true, doNotRegisterOpenCommand: true });
 
 Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews([{
 	id: LucosChatViewPane.ID,
@@ -143,10 +156,11 @@ Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews
 	// The focus command (TW-158) + its keybinding come for free from this descriptor.
 	openCommandActionDescriptor: {
 		id: LUCOS_FOCUS_CHAT_COMMAND_ID,
-		mnemonicTitle: localize({ key: 'miLucos', comment: ['&& denotes a mnemonic'] }, "&&Lucos AI"),
-		// TODO(TW-158): ticket specifies Cmd/Ctrl+Shift+A - verify it does not collide with an
-		// existing default binding before finalising.
-		keybindings: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyA },
+		mnemonicTitle: localize({ key: 'miLucos', comment: ['&& denotes a mnemonic'] }, "&&Chat"),
+		keybindings: {
+			primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI,
+			mac: { primary: KeyMod.CtrlCmd | KeyMod.WinCtrl | KeyCode.KeyI },
+		},
 		order: 1,
 	},
 }], viewContainer);
@@ -196,6 +210,10 @@ registerAction2(LucosGenerateTestsAction);
 registerAction2(LucosReviewChangesAction);
 registerAction2(LucosSelectCustomizationAction);
 registerAction2(LucosIndexWorkspaceAction);
+//#endregion
+
+//#region Lucos view gear -> status popover (indexing status + metadata)
+registerAction2(LucosShowStatusAction);
 //#endregion
 
 //#region Notifications (TW-170)

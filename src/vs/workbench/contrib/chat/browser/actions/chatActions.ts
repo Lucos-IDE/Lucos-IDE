@@ -3,19 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isAncestorOfActiveElement } from '../../../../../base/browser/dom.js';
 import { alert } from '../../../../../base/browser/ui/aria/aria.js';
 import { WorkbenchActionExecutedClassification, WorkbenchActionExecutedEvent } from '../../../../../base/common/actions.js';
 import { coalesce } from '../../../../../base/common/arrays.js';
-import { timeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { safeIntl } from '../../../../../base/common/date.js';
-import { Event } from '../../../../../base/common/event.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { language } from '../../../../../base/common/platform.js';
-import { basename } from '../../../../../base/common/resources.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { EditorAction2 } from '../../../../../editor/browser/editorExtensions.js';
@@ -27,10 +22,8 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IsLinuxContext, IsWindowsContext } from '../../../../../platform/contextkey/common/contextkeys.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
-import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
+import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
-import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import product from '../../../../../platform/product/common/product.js';
@@ -40,36 +33,34 @@ import { ActiveEditorContext } from '../../../../common/contextkeys.js';
 import { IViewDescriptorService, ViewContainerLocation } from '../../../../common/views.js';
 import { ChatEntitlement, IChatEntitlementService } from '../../../../services/chat/common/chatEntitlementService.js';
 import { ACTIVE_GROUP, AUX_WINDOW_GROUP, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
-import { IHostService } from '../../../../services/host/browser/host.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { IPreferencesService } from '../../../../services/preferences/common/preferences.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { EXTENSIONS_CATEGORY, IExtensionsWorkbenchService } from '../../../extensions/common/extensions.js';
-import { SCMHistoryItemChangeRangeContentProvider, ScmHistoryItemChangeRangeUriFields } from '../../../scm/browser/scmHistoryChatContext.js';
-import { ISCMService } from '../../../scm/common/scm.js';
-import { IChatAgentResult, IChatAgentService } from '../../common/participants/chatAgents.js';
+import { IChatAgentResult } from '../../common/participants/chatAgents.js';
 import { ChatContextKeys } from '../../common/actions/chatContextKeys.js';
 import { ModifiedFileEntryState } from '../../common/editing/chatEditingService.js';
-import { IChatModel, IChatResponseModel } from '../../common/model/chatModel.js';
+import { IChatModel } from '../../common/model/chatModel.js';
 import { ChatMode, IChatMode } from '../../common/chatModes.js';
-import { ElicitationState, IChatService, IChatToolInvocation } from '../../common/chatService/chatService.js';
-import { ISCMHistoryItemChangeRangeVariableEntry, ISCMHistoryItemChangeVariableEntry } from '../../common/attachments/chatVariableEntries.js';
 import { IChatRequestViewModel, IChatResponseViewModel, isRequestVM } from '../../common/model/chatViewModel.js';
 import { IChatWidgetHistoryService } from '../../common/widget/chatWidgetHistoryService.js';
-import { ChatAgentLocation, ChatConfiguration, ChatModeKind, getDefaultNewChatSessionResource, getDefaultNewChatSessionType } from '../../common/constants.js';
+import { ChatConfiguration, ChatModeKind, getDefaultNewChatSessionResource, getDefaultNewChatSessionType } from '../../common/constants.js';
 import { AICustomizationManagementCommands } from '../aiCustomization/aiCustomizationManagement.js';
-import { ILanguageModelChatSelector, ILanguageModelsService } from '../../common/languageModels.js';
+import { ILanguageModelChatSelector } from '../../common/languageModels.js';
 import { CopilotUsageExtensionFeatureId } from '../../common/languageModelStats.js';
 import { ILanguageModelToolsConfirmationService } from '../../common/tools/languageModelToolsConfirmationService.js';
 import { ILanguageModelToolsService, IToolData, IToolSet, isToolSet, ToolAndToolSetEnablementMap } from '../../common/tools/languageModelToolsService.js';
 import { ChatViewId, IChatWidget, IChatWidgetService, isIChatViewViewContext } from '../chat.js';
 import { IChatEditorOptions } from '../widgetHosts/editor/chatEditor.js';
 import { ChatEditorInput, showClearEditingSessionConfirmation } from '../widgetHosts/editor/chatEditorInput.js';
-import { convertBufferToScreenshotVariable } from '../attachments/chatScreenshotContext.js';
 import { getChatSessionType } from '../../common/model/chatUri.js';
 import { IChatSessionsService, localChatSessionType } from '../../common/chatSessionsService.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ChatViewPane } from '../widgetHosts/viewPane/chatViewPane.js';
+// LUCOS_FORK: imports used only by the previous Copilot OpenChatGlobalAction.run body — restore with that implementation:
+// isAncestorOfActiveElement, timeout, Event, basename, ThemeIcon, IFileService, IInstantiationService,
+// ILogService, IHostService, SCM history helpers, ISCMService, IChatAgentService, IChatService,
+// ILanguageModelsService, convertBufferToScreenshotVariable, ElicitationState, IChatToolInvocation, etc.
 
 export const CHAT_CATEGORY = localize2('chat.category', 'Chat');
 
@@ -205,275 +196,22 @@ abstract class OpenChatGlobalAction extends Action2 {
 			icon: Codicon.chatSparkle,
 			f1: true,
 			category: CHAT_CATEGORY,
-			precondition: ContextKeyExpr.and(
-				ChatContextKeys.Setup.hidden.negate(),
-				ChatContextKeys.Setup.disabledInWorkspace.negate(),
-			)
+			// LUCOS_FORK: drop Copilot setup preconditions so Open Chat / keybinding always reach Lucos.
 		});
 	}
 
-	override async run(accessor: ServicesAccessor, opts?: string | IChatViewOpenOptions): Promise<IChatAgentResult & { type?: 'confirmation' } | undefined> {
-		opts = typeof opts === 'string' ? { query: opts } : opts;
-
-		const chatService = accessor.get(IChatService);
-		const widgetService = accessor.get(IChatWidgetService);
-		const toolsService = accessor.get(ILanguageModelToolsService);
-		const hostService = accessor.get(IHostService);
-		const chatAgentService = accessor.get(IChatAgentService);
-		const instaService = accessor.get(IInstantiationService);
-		const commandService = accessor.get(ICommandService);
-		const fileService = accessor.get(IFileService);
-		const languageModelService = accessor.get(ILanguageModelsService);
-		const scmService = accessor.get(ISCMService);
-		const logService = accessor.get(ILogService);
-		const configurationService = accessor.get(IConfigurationService);
-
-		let chatWidget = widgetService.lastFocusedWidget;
-		// When this was invoked to switch to a mode via keybinding, and some chat widget is focused, use that one.
-		// Otherwise, open the view.
-		if (!this.mode || !chatWidget || !isAncestorOfActiveElement(chatWidget.domNode)) {
-			chatWidget = await widgetService.revealWidget();
-		}
-
-		if (!chatWidget) {
-			return;
-		}
-
-		const switchToMode = opts?.mode ? chatWidget.input.currentChatModesObs.get().findModeByName(opts.mode) : this.mode;
-		if (switchToMode) {
-			await this.handleSwitchToMode(switchToMode, chatWidget, instaService, commandService);
-		}
-
-		if (opts?.modelSelector) {
-			const ids = await languageModelService.selectLanguageModels(opts.modelSelector);
-			const id = ids.sort().at(0);
-			if (!id) {
-				throw new Error(`No language models found matching selector: ${JSON.stringify(opts.modelSelector)}.`);
-			}
-
-			const model = languageModelService.lookupLanguageModel(id);
-			if (!model) {
-				throw new Error(`Language model not loaded: ${id}.`);
-			}
-
-			chatWidget.input.setCurrentLanguageModel({ metadata: model, identifier: id }, true);
-		}
-
-		if (opts?.toolsInclude || opts?.toolsExclude) {
-			const model = chatWidget.input.selectedLanguageModel.get()?.metadata;
-			const allTools = Array.from(toolsService.getTools(model));
-			const allToolSets = Array.from(toolsService.getToolSetsForModel(model));
-
-			const result = computeToolEnablementMap({
-				allTools,
-				allToolSets,
-				toolsInclude: opts.toolsInclude,
-				toolsExclude: opts.toolsExclude,
-			});
-
-			for (const identifier of result.unknownIdentifiers) {
-				logService.warn(`Tool filtering: Unknown identifier '${identifier}' - no matching tool or toolset found.`);
-			}
-
-			chatWidget.input.selectedToolsModel.set(result.enablementMap, true);
-		}
-
-		if (opts?.previousRequests?.length && chatWidget.viewModel) {
-			for (const { request, response } of opts.previousRequests) {
-				chatService.addCompleteRequest(chatWidget.viewModel.sessionResource, request, undefined, 0, { message: response });
-			}
-		}
-		if (opts?.attachScreenshot) {
-			const screenshot = await hostService.getScreenshot();
-			if (screenshot) {
-				chatWidget.attachmentModel.addContext(convertBufferToScreenshotVariable(screenshot));
-			}
-		}
-		if (opts?.attachFiles) {
-			for (const file of opts.attachFiles) {
-				const uri = file instanceof URI ? file : file.uri;
-				const range = file instanceof URI ? undefined : file.range;
-
-				if (await fileService.exists(uri)) {
-					chatWidget.attachmentModel.addFile(uri, range);
-				}
-			}
-		}
-		if (opts?.attachHistoryItemChanges) {
-			for (const historyItemChange of opts.attachHistoryItemChanges) {
-				const repository = scmService.getRepository(URI.file(historyItemChange.uri.path));
-				const historyProvider = repository?.provider.historyProvider.get();
-				if (!historyProvider) {
-					continue;
-				}
-
-				const historyItem = await historyProvider.resolveHistoryItem(historyItemChange.historyItemId);
-				if (!historyItem) {
-					continue;
-				}
-
-				chatWidget.attachmentModel.addContext({
-					id: historyItemChange.uri.toString(),
-					name: `${basename(historyItemChange.uri)}`,
-					value: historyItemChange.uri,
-					historyItem: historyItem,
-					kind: 'scmHistoryItemChange'
-				} satisfies ISCMHistoryItemChangeVariableEntry);
-			}
-		}
-		if (opts?.attachHistoryItemChangeRanges) {
-			for (const historyItemChangeRange of opts.attachHistoryItemChangeRanges) {
-				const repository = scmService.getRepository(URI.file(historyItemChangeRange.end.uri.path));
-				const historyProvider = repository?.provider.historyProvider.get();
-				if (!repository || !historyProvider) {
-					continue;
-				}
-
-				const [historyItemStart, historyItemEnd] = await Promise.all([
-					historyProvider.resolveHistoryItem(historyItemChangeRange.start.historyItemId),
-					historyProvider.resolveHistoryItem(historyItemChangeRange.end.historyItemId),
-				]);
-				if (!historyItemStart || !historyItemEnd) {
-					continue;
-				}
-
-				const uri = historyItemChangeRange.end.uri.with({
-					scheme: SCMHistoryItemChangeRangeContentProvider.scheme,
-					query: JSON.stringify({
-						repositoryId: repository.id,
-						start: historyItemStart.id,
-						end: historyItemChangeRange.end.historyItemId
-					} satisfies ScmHistoryItemChangeRangeUriFields)
-				});
-
-				chatWidget.attachmentModel.addContext({
-					id: uri.toString(),
-					name: `${basename(uri)}`,
-					value: uri,
-					historyItemChangeStart: {
-						uri: historyItemChangeRange.start.uri,
-						historyItem: historyItemStart
-					},
-					historyItemChangeEnd: {
-						uri: historyItemChangeRange.end.uri,
-						historyItem: {
-							...historyItemEnd,
-							displayId: historyItemChangeRange.end.historyItemId
-						}
-					},
-					kind: 'scmHistoryItemChangeRange'
-				} satisfies ISCMHistoryItemChangeRangeVariableEntry);
-			}
-		}
-
-		let resp: Promise<IChatResponseModel | undefined> | undefined;
-
-		if (opts?.query) {
-
-			if (opts.isPartialQuery) {
-				chatWidget.input.showScrollbarUntilAccept();
-				chatWidget.setInput(opts.query);
-			} else {
-				if (!chatWidget.viewModel) {
-					await Event.toPromise(chatWidget.onDidChangeViewModel);
-				}
-				await waitForDefaultAgent(chatAgentService, chatWidget.input.currentModeKind);
-				chatWidget.setInput(opts.query); // wait until the model is restored before setting the input, or it will be cleared when the model is restored
-				resp = chatWidget.acceptInput();
-			}
-		}
-
-		if (opts?.toolIds && opts.toolIds.length > 0) {
-			for (const toolId of opts.toolIds) {
-				const tool = toolsService.getTool(toolId);
-				if (tool) {
-					chatWidget.attachmentModel.addContext({
-						id: tool.id,
-						name: tool.displayName,
-						fullName: tool.displayName,
-						value: undefined,
-						icon: ThemeIcon.isThemeIcon(tool.icon) ? tool.icon : undefined,
-						kind: 'tool'
-					});
-				}
-			}
-		}
-
-		chatWidget.focusInput();
-
-		if (opts?.blockOnResponse) {
-			const response = await resp;
-			if (response) {
-				const autoReplyEnabled = configurationService.getValue<boolean>(ChatConfiguration.AutoReply);
-				await new Promise<void>(resolve => {
-					const d = response.onDidChange(async () => {
-						if (response.isComplete) {
-							d.dispose();
-							resolve();
-							return;
-						}
-
-						const pendingConfirmation = response.isPendingConfirmation.get();
-						if (pendingConfirmation) {
-							// Check if the pending confirmation is a question carousel that will be auto-replied.
-							// Only question carousels are auto-replied; other confirmation types (tool approvals,
-							// elicitations, etc.) should cause us to resolve immediately.
-							const hasPendingQuestionCarousel = response.response.value.some(
-								part => part.kind === 'questionCarousel' && !part.isUsed
-							);
-							if (autoReplyEnabled && hasPendingQuestionCarousel) {
-								// Auto-reply will handle this question carousel, keep waiting
-								return;
-							}
-							d.dispose();
-							resolve();
-						}
-					});
-				});
-
-				const confirmationInfo = getPendingConfirmationInfo(response);
-				if (confirmationInfo) {
-					return { ...response.result, ...confirmationInfo };
-				}
-				return { ...response.result };
-			}
-		}
-
+	override async run(accessor: ServicesAccessor, _opts?: string | IChatViewOpenOptions): Promise<IChatAgentResult & { type?: 'confirmation' } | undefined> {
+		// LUCOS_FORK: Copilot chat panel is unregistered; title-bar / keybinding open Lucos instead.
+		// Restore the previous OpenChatGlobalAction.run body from git when re-enabling workbench.panel.chat.
+		void this.mode;
+		const viewsService = accessor.get(IViewsService);
+		await viewsService.openView('lucos.chatView', true);
 		return undefined;
 	}
-
-	private async handleSwitchToMode(switchToMode: IChatMode, chatWidget: IChatWidget, instaService: IInstantiationService, commandService: ICommandService): Promise<void> {
-		const currentMode = chatWidget.input.currentModeKind;
-
-		if (switchToMode) {
-			const model = chatWidget.viewModel?.model;
-			const chatModeCheck = model ? await instaService.invokeFunction(handleModeSwitch, currentMode, switchToMode.kind, model.getRequests().length, model) : { needToClearSession: false };
-			if (!chatModeCheck) {
-				return;
-			}
-			chatWidget.input.setChatMode(switchToMode.id);
-
-			if (chatModeCheck.needToClearSession) {
-				await commandService.executeCommand(ACTION_ID_NEW_CHAT);
-			}
-		}
-	}
 }
 
-async function waitForDefaultAgent(chatAgentService: IChatAgentService, mode: ChatModeKind): Promise<void> {
-	const defaultAgent = chatAgentService.getDefaultAgent(ChatAgentLocation.Chat, mode);
-	if (defaultAgent) {
-		return;
-	}
-
-	await Promise.race([
-		Event.toPromise(Event.filter(chatAgentService.onDidChangeAgents, () => {
-			const defaultAgent = chatAgentService.getDefaultAgent(ChatAgentLocation.Chat, mode);
-			return Boolean(defaultAgent);
-		})),
-		timeout(60_000).then(() => { throw new Error('Timed out waiting for default agent'); })
-	]);
-}
+// LUCOS_FORK: waitForDefaultAgent + getPendingConfirmationInfo lived here for Copilot Open Chat.
+// Restore from git with OpenChatGlobalAction.run when re-enabling workbench.panel.chat.
 
 /**
  * Information about a pending confirmation in a chat response.
@@ -484,56 +222,6 @@ export type IChatPendingConfirmationInfo =
 	| { type: 'confirmation'; kind: 'confirmation'; title: string; data: unknown }
 	| { type: 'confirmation'; kind: 'questionCarousel'; questions: unknown[] }
 	| { type: 'confirmation'; kind: 'elicitation'; title: string };
-
-/**
- * Extracts detailed information about the pending confirmation from a chat response.
- * Returns undefined if there is no pending confirmation.
- */
-function getPendingConfirmationInfo(response: IChatResponseModel): IChatPendingConfirmationInfo | undefined {
-	for (const part of response.response.value) {
-		if (part.kind === 'toolInvocation') {
-			const state = part.state.get();
-			if (state.type === IChatToolInvocation.StateKind.WaitingForConfirmation) {
-				return {
-					type: 'confirmation',
-					kind: 'toolInvocation',
-					toolId: part.toolId,
-				};
-			}
-			if (state.type === IChatToolInvocation.StateKind.WaitingForPostApproval) {
-				return {
-					type: 'confirmation',
-					kind: 'toolPostApproval',
-					toolId: part.toolId,
-				};
-			}
-		}
-		if (part.kind === 'confirmation' && !part.isUsed) {
-			return {
-				type: 'confirmation',
-				kind: 'confirmation',
-				title: part.title,
-				data: part.data,
-			};
-		}
-		if (part.kind === 'questionCarousel' && !part.isUsed) {
-			return {
-				type: 'confirmation',
-				kind: 'questionCarousel',
-				questions: part.questions,
-			};
-		}
-		if (part.kind === 'elicitation2' && part.state.get() === ElicitationState.Pending) {
-			const title = part.title;
-			return {
-				type: 'confirmation',
-				kind: 'elicitation',
-				title: typeof title === 'string' ? title : title.value,
-			};
-		}
-	}
-	return undefined;
-}
 
 class PrimaryOpenChatGlobalAction extends OpenChatGlobalAction {
 	constructor() {
@@ -614,15 +302,16 @@ export function registerChatActions() {
 			const layoutService = accessor.get(IWorkbenchLayoutService);
 			const viewsService = accessor.get(IViewsService);
 			const viewDescriptorService = accessor.get(IViewDescriptorService);
-			const widgetService = accessor.get(IChatWidgetService);
 
-			const chatLocation = viewDescriptorService.getViewLocationById(ChatViewId);
-			const chatVisible = viewsService.isViewVisible(ChatViewId);
+			// LUCOS_FORK: Toggle Lucos chat (Copilot ChatViewId is unregistered).
+			const lucosChatViewId = 'lucos.chatView';
+			const chatLocation = viewDescriptorService.getViewLocationById(lucosChatViewId);
+			const chatVisible = viewsService.isViewVisible(lucosChatViewId);
 			if (chatVisible) {
 				this.updatePartVisibility(layoutService, chatLocation, false);
 			} else {
 				this.updatePartVisibility(layoutService, chatLocation, true);
-				(await widgetService.revealWidget())?.focusInput();
+				await viewsService.openView(lucosChatViewId, true);
 			}
 		}
 

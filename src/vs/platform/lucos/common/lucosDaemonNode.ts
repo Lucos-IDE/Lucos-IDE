@@ -1,9 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Lucos IDE — channel-facing daemon service (TW-161). Shared across the IPC boundary.
- *  Differs from the UI-facing ILucosDaemonService in ways a ProxyChannel requires:
- *    • no CancellationToken params (ProxyChannel cannot marshal them) — cancel is a separate call
- *    • the server-stream is start (returns a taskId) + a per-id dynamic event (`onDynamic…`)
- *    • state is exposed as async getters + static `onDidChange…` events (auto-buffered by fromService)
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../base/common/event.js';
