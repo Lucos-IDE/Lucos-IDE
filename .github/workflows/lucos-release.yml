@@ -3,8 +3,8 @@
 # Triggers
 # ────────────────────────────────────────────────────────────────────────────
 #  pull_request → main / release/*  : compile + unit tests  (fast gate)
-#  push → lucos-prod                 : core-ci + build-scripts gate, then platform builds
-#  push → v* tag                     : same as main + signed artifacts
+#  push → lucos-prod / v* tags       : light compile gate, then platform builds
+#                                      (tags also codesign/notarize when secrets exist)
 #
 # Secrets required for signed release builds (tag pushes)
 # ────────────────────────────────────────────────────────────────────────────
