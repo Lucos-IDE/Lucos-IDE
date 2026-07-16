@@ -17,9 +17,11 @@
 #  Windows:
 #    WINDOWS_PFX_DATA                     base64-encoded authenticode cert (.pfx)
 #    WINDOWS_PFX_PASSWORD                 password for the .pfx
-#  Daemon (optional if Lucos-IDE/local-daemon is public to this workflow):
-#    LUCOS_DAEMON_TOKEN                   PAT with contents:read on Lucos-IDE/local-daemon
-#                                         (falls back to GITHUB_TOKEN)
+#  Daemon (required — local-daemon is a private sibling repo):
+#    LUCOS_DAEMON_TOKEN                   PAT with Contents: Read on Lucos-IDE/local-daemon
+#      OR
+#    LUCOS_DAEMON_SSH_KEY                 read-only deploy key private key for that repo
+#    (GITHUB_TOKEN cannot checkout sibling private repos — API returns Not Found)
 
 name: Lucos Release CI
 
@@ -285,7 +287,8 @@ jobs:
         with:
           platform: darwin
           arch: arm64
-          token: ${{ secrets.LUCOS_DAEMON_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
       - name: Package macOS arm64 app
         run: npm run gulp lucos-darwin-arm64-min-ci
@@ -499,7 +502,8 @@ jobs:
         with:
           platform: darwin
           arch: x64
-          token: ${{ secrets.LUCOS_DAEMON_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
       - name: Package macOS x64 app
         run: npm run gulp lucos-darwin-x64-min-ci
@@ -696,7 +700,8 @@ jobs:
         with:
           platform: win32
           arch: x64
-          token: ${{ secrets.LUCOS_DAEMON_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
       - name: Download Explorer context-menu DLL
         run: node build/win32/explorer-dll-fetcher.ts .build/win32/appx
@@ -874,7 +879,8 @@ jobs:
         with:
           platform: linux
           arch: x64
-          token: ${{ secrets.LUCOS_DAEMON_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
       - name: Package Linux x64 app
         run: npm run gulp lucos-linux-x64-min-ci

@@ -9,24 +9,68 @@ inputs:
     description: Target arch (arm64, x64)
     required: true
   token:
-    description: GitHub token with read access to Lucos-IDE/local-daemon
-    required: true
+    description: >
+      PAT with contents:read on Lucos-IDE/local-daemon.
+      GITHUB_TOKEN cannot access sibling private repos (API returns Not Found).
+    required: false
+    default: ''
+  ssh-key:
+    description: >
+      Optional deploy key (private key) with read access to Lucos-IDE/local-daemon.
+      Used when token is empty.
+    required: false
+    default: ''
 
 runs:
   using: composite
   steps:
+    - name: Require access to local-daemon
+      shell: bash
+      env:
+        LUCOS_DAEMON_TOKEN: ${{ inputs.token }}
+        LUCOS_DAEMON_SSH_KEY: ${{ inputs.ssh-key }}
+      run: |
+        set -euo pipefail
+        if [[ -z "${LUCOS_DAEMON_TOKEN}" && -z "${LUCOS_DAEMON_SSH_KEY}" ]]; then
+          cat <<'EOF' >&2
+        ::error::Cannot build lucos-daemon: no credentials for Lucos-IDE/local-daemon.
+
+        GITHUB_TOKEN only covers Lucos-IDE/Lucos-IDE. Sibling private repos need one of:
+
+          1) Repo secret LUCOS_DAEMON_TOKEN
+             - Fine-grained PAT (or classic) with Contents: Read on Lucos-IDE/local-daemon
+             - Organization approval if the org requires it
+
+          2) Repo secret LUCOS_DAEMON_SSH_KEY
+             - Read-only deploy key on Lucos-IDE/local-daemon
+             - Private key stored as the secret value
+
+        Then re-run this workflow.
+        EOF
+          exit 1
+        fi
+
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.23.x'
         cache: false
 
-    - name: Checkout local-daemon
+    - name: Checkout local-daemon (token)
+      if: ${{ inputs.token != '' }}
       uses: actions/checkout@v4
       with:
         repository: Lucos-IDE/local-daemon
         path: .build/src/local-daemon
         token: ${{ inputs.token }}
+
+    - name: Checkout local-daemon (deploy key)
+      if: ${{ inputs.token == '' && inputs.ssh-key != '' }}
+      uses: actions/checkout@v4
+      with:
+        repository: Lucos-IDE/local-daemon
+        path: .build/src/local-daemon
+        ssh-key: ${{ inputs.ssh-key }}
 
     - name: Build and stage daemon binary
       shell: bash
