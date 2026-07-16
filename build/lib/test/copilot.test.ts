@@ -204,6 +204,40 @@ suite('copilot', () => {
 		}
 	});
 
+	test('seeds Copilot SDK from the platform package when the npm stub has no sdk/', () => {
+		const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vscode-copilot-sdk-seed-test-'));
+		try {
+			const builtInCopilotExtensionDir = path.join(repoRoot, 'extensions', 'copilot');
+			const extensionCopilotDir = path.join(builtInCopilotExtensionDir, 'node_modules', '@github', 'copilot');
+			const appNodeModulesDir = path.join(repoRoot, 'node_modules');
+			const platformPackageDir = path.join(appNodeModulesDir, '@github', 'copilot-darwin-arm64');
+
+			// Stub-only @github/copilot (matches the published npm package).
+			fs.mkdirSync(extensionCopilotDir, { recursive: true });
+			fs.writeFileSync(path.join(extensionCopilotDir, 'npm-loader.js'), '');
+			fs.writeFileSync(path.join(extensionCopilotDir, 'package.json'), '{"name":"@github/copilot"}');
+
+			fs.mkdirSync(path.join(platformPackageDir, 'sdk', 'definitions'), { recursive: true });
+			fs.writeFileSync(path.join(platformPackageDir, 'sdk', 'index.js'), 'export {};');
+			fs.writeFileSync(path.join(platformPackageDir, 'sdk', 'definitions', 'tools.json'), '{}');
+			fs.mkdirSync(path.join(platformPackageDir, 'prebuilds', 'darwin-arm64'), { recursive: true });
+			fs.writeFileSync(path.join(platformPackageDir, 'prebuilds', 'darwin-arm64', 'runtime.node'), '');
+			fs.mkdirSync(path.join(platformPackageDir, 'tgrep', 'bin', 'darwin-arm64'), { recursive: true });
+			fs.writeFileSync(path.join(platformPackageDir, 'tgrep', 'bin', 'darwin-arm64', 'tgrep'), '');
+			fs.mkdirSync(path.join(appNodeModulesDir, '@vscode', 'ripgrep-universal', 'bin', 'darwin-arm64'), { recursive: true });
+			fs.writeFileSync(path.join(appNodeModulesDir, '@vscode', 'ripgrep-universal', 'bin', 'darwin-arm64', 'rg'), '');
+
+			prepareBuiltInCopilotRipgrepShim('darwin', 'arm64', builtInCopilotExtensionDir, appNodeModulesDir);
+
+			assert(fs.existsSync(path.join(extensionCopilotDir, 'sdk', 'index.js')));
+			assert(fs.existsSync(path.join(extensionCopilotDir, 'sdk', 'definitions', 'tools.json')));
+			assert(fs.existsSync(path.join(extensionCopilotDir, 'sdk', 'prebuilds', 'darwin-arm64', 'runtime.node')));
+			assert(fs.existsSync(path.join(extensionCopilotDir, 'sdk', 'ripgrep', 'bin', 'darwin-arm64', 'rg')));
+		} finally {
+			fs.rmSync(repoRoot, { recursive: true, force: true });
+		}
+	});
+
 	test('strips all copilot platform packages for unsupported armhf builds', () => {
 		assert.deepStrictEqual(
 			getCopilotExcludeFilter('linux', 'armhf'),

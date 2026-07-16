@@ -224,7 +224,8 @@ jobs:
           fi
           npm --prefix extensions/copilot run compile
           npm run gulp compile-copilot-extension-build
-          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
           npm run gulp lucos-darwin-arm64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -359,7 +360,8 @@ jobs:
           fi
           npm --prefix extensions/copilot run compile
           npm run gulp compile-copilot-extension-build
-          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
           npm run gulp lucos-darwin-x64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -497,8 +499,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run gulp compile-copilot-extension-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path .build/extensions/copilot/node_modules/@github/copilot/sdk)) {
-            throw "Copilot SDK missing after compile-copilot-extension-build"
+          if (-not (Test-Path .build/extensions/copilot)) {
+            throw "Copilot extension missing after compile-copilot-extension-build"
           }
           npm run gulp lucos-win32-x64-min-ci
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -608,7 +610,8 @@ jobs:
           fi
           npm --prefix extensions/copilot run compile
           npm run gulp compile-copilot-extension-build
-          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
           npm run gulp lucos-linux-x64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
