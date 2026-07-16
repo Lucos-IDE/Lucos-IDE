@@ -116,7 +116,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compile & hygiene checks
-        if: github.ref != 'refs/heads/lucos-prod'
+        # Full upstream gate for PRs only. lucos-prod + v* tags are artifact
+        # builds: hygiene/eslint cancel parallel jobs and block shipping.
+        if: github.event_name == 'pull_request'
         run: |
           npm exec -- npm-run-all2 -lp \
             core-ci \
@@ -130,18 +132,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # lucos-prod pushes are build-only. Platform jobs each re-run core-ci, so
-      # this gate stays light: parallel core-ci + test-build-scripts on a 7GB
-      # ubuntu-22.04 runner often dies with exit 143 (SIGTERM/OOM) during
-      # tsgo-typecheck.
+      # Artifact builds (lucos-prod / v* tags): platform jobs each re-run core-ci.
+      # Keep this gate light to avoid OOM (exit 143) and hygiene cancellations.
       - name: Compile (build gate)
-        if: github.ref == 'refs/heads/lucos-prod'
+        if: github.event_name != 'pull_request'
         run: npm run test-build-scripts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check cyclic dependencies
-        if: github.ref != 'refs/heads/lucos-prod'
+        if: github.event_name == 'pull_request'
         run: node build/lib/checkCyclicDependencies.ts out-build
 
   # ── 2. Unit tests (Node.js) ─────────────────────────────────────────────────
@@ -150,7 +150,7 @@ jobs:
   test-unit:
     name: Unit Tests (Node.js)
     needs: compile
-    if: github.ref != 'refs/heads/lucos-prod'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -881,7 +881,7 @@ jobs:
   test-smoke:
     name: Smoke Tests (macOS arm64)
     needs: [build-darwin-arm64]
-    if: github.event_name != 'pull_request' && github.ref != 'refs/heads/lucos-prod'
+    if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/lucos-prod'
     runs-on: macos-14
     env:
       VSCODE_ARCH: arm64
