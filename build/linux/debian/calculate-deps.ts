@@ -25,8 +25,10 @@ function calculatePackageDeps(binaryPath: string, arch: DebianArchString, chromi
 			throw new Error(`Binary ${binaryPath} needs to have an executable bit set.`);
 		}
 	} catch (e) {
-		// The package might not exist. Don't re-throw the error here.
+		// Binary may be absent (e.g. tunnel CLI not shipped). Skip rather than
+		// feeding a missing path to dpkg-shlibdeps, which fails hard.
 		console.error('Tried to stat ' + binaryPath + ' but failed.');
+		return new Set();
 	}
 
 	// Get the Chromium dpkg-shlibdeps file.
