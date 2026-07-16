@@ -255,9 +255,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Import Apple Developer certificate (signed releases only)
-        if: >
-          startsWith(github.ref, 'refs/tags/') &&
-          secrets.APPLE_CERT_P12 != ''
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -287,9 +285,7 @@ jobs:
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       - name: Codesign macOS app (signed releases only)
-        if: >
-          startsWith(github.ref, 'refs/tags/') &&
-          secrets.APPLE_CERT_P12 != ''
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           AGENT_TEMPDIRECTORY: ${{ runner.temp }}
           AGENT_BUILDDIRECTORY: ${{ runner.workspace }}
@@ -310,9 +306,7 @@ jobs:
           echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-arm64.dmg" >> "$GITHUB_ENV"
 
       - name: Notarize DMG (signed releases only)
-        if: >
-          startsWith(github.ref, 'refs/tags/') &&
-          secrets.APPLE_CERT_P12 != ''
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD }}
@@ -436,9 +430,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Import Apple Developer certificate (signed releases only)
-        if: >
-          startsWith(github.ref, 'refs/tags/') &&
-          secrets.APPLE_CERT_P12 != ''
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -468,9 +460,7 @@ jobs:
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       - name: Codesign macOS app (signed releases only)
-        if: >
-          startsWith(github.ref, 'refs/tags/') &&
-          secrets.APPLE_CERT_P12 != ''
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           AGENT_TEMPDIRECTORY: ${{ runner.temp }}
           AGENT_BUILDDIRECTORY: ${{ runner.workspace }}
@@ -490,9 +480,7 @@ jobs:
           echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-x64.dmg" >> "$GITHUB_ENV"
 
       - name: Notarize DMG (signed releases only)
-        if: >
-          startsWith(github.ref, 'refs/tags/') &&
-          secrets.APPLE_CERT_P12 != ''
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD }}
