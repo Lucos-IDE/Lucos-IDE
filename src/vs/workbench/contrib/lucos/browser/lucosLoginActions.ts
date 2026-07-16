@@ -7,6 +7,7 @@ import { localize2 } from '../../../../nls.js';
 import { Action2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 
@@ -42,6 +43,31 @@ export class LucosLogoutAction extends Action2 {
 	}
 }
 
+/**
+ * Clears all stored Lucos credentials from the OS keychain and immediately shows the
+ * sign-in overlay.  Useful for testing and for switching accounts.
+ */
+export class LucosResetAuthAction extends Action2 {
+	static readonly ID = 'lucos.resetAuth';
+	constructor() {
+		super({
+			id: LucosResetAuthAction.ID,
+			title: localize2('lucos.resetAuth.title', "Reset Auth State (Show Sign-in Overlay)"),
+			category: LUCOS_CATEGORY,
+			f1: true,
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const authService = accessor.get(ILucosAuthService);
+		const notificationService = accessor.get(INotificationService);
+		await authService.logout();
+		notificationService.notify({
+			severity: Severity.Info,
+			message: 'Lucos auth cleared — sign-in overlay should now be visible.',
+		});
+	}
+}
+
 export class LucosGoogleLoginAction extends Action2 {
 	static readonly ID = 'lucos.loginWithGoogle';
 	constructor() {
@@ -67,3 +93,4 @@ export class LucosAuthRestoreContribution extends Disposable implements IWorkben
 		void lucosAuthService.restore();
 	}
 }
+

@@ -1,0 +1,47 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import { URI } from '../../../../base/common/uri.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
+import { EditorInputCapabilities } from '../../../common/editor.js';
+import { localize } from '../../../../nls.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+
+const lucosSignInIcon = registerIcon('lucos-sign-in', Codicon.account, localize('lucosSignInIcon', "Icon for the Lucos sign in page."));
+
+export class LucosSignInEditorInput extends EditorInput {
+
+	static readonly ID = 'workbench.input.lucosSignIn';
+
+	override get typeId(): string {
+		return LucosSignInEditorInput.ID;
+	}
+
+	override get editorId(): string | undefined {
+		return this.typeId;
+	}
+
+	override get resource(): URI | undefined {
+		return URI.from({ scheme: 'lucos-sign-in', path: '/sign-in' });
+	}
+
+	override getName(): string {
+		return localize('lucos.signIn.editorTitle', "Sign In to Lucos");
+	}
+
+	override getIcon(): ThemeIcon | undefined {
+		return lucosSignInIcon;
+	}
+
+	override matches(other: EditorInput | unknown): boolean {
+		return other instanceof LucosSignInEditorInput;
+	}
+
+	override get capabilities(): EditorInputCapabilities {
+		return EditorInputCapabilities.Singleton | EditorInputCapabilities.Readonly;
+	}
+}

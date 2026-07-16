@@ -10,6 +10,8 @@ import { SyncDescriptor } from '../../../../platform/instantiation/common/descri
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
+import { EditorExtensions } from '../../../common/editor.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Extensions as ViewContainerExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainer, ViewContainerLocation } from '../../../common/views.js';
@@ -27,15 +29,19 @@ import { LucosAuthService } from './lucosAuthService.js';
 import { LucosIndexService } from './lucosIndexService.js';
 import { LucosChatViewPane } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
-import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosGoogleLoginAction } from './lucosLoginActions.js';
+import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosResetAuthAction, LucosGoogleLoginAction } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
 import { LucosShowStatusAction } from './lucosStatusActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
-import { LucosFirstRunContribution } from './lucosFirstRunContribution.js';
+// import { LucosSignInOnStartupContribution } from './lucosFirstRunContribution.js';
+import { LucosSignInEditorInput } from './lucosSignInEditorInput.js';
+import { LucosSignInEditorPane } from './lucosSignInEditorPane.js';
+import { LucosSignInOverlayContribution } from './lucosSignInOverlay.js';
 import { LucosWorkspaceIndexWatcher } from './lucosWorkspaceIndexWatcher.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 import { LucosAuthModeService } from './lucosAuthModeService.js';
 import { LucosAuthCallbackHandler } from './lucosAuthCallbackHandler.js';
+import { LucosAccountSettingsContribution } from './lucosAccountSettings.js';
 
 //#region Services
 // The daemon service is bound per-platform: desktop -> real gRPC client
@@ -59,6 +65,14 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	title: localize('lucos.configuration.title', "Lucos AI"),
 	type: 'object',
 	properties: {
+		[LucosSettingId.AccountInfo]: {
+			type: 'string',
+			default: '',
+			scope: ConfigurationScope.MACHINE,
+			markdownDescription: localize('lucos.account.info', "**Account Information:** Not signed in. Use the Lucos: Sign In command to authenticate."),
+			tags: ['lucos'],
+			order: 0,
+		},
 		[LucosSettingId.AgentUrl]: {
 			type: 'string',
 			default: '',
@@ -165,22 +179,38 @@ Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews
 registerWorkbenchContribution2(LucosStatusBarContribution.ID, LucosStatusBarContribution, WorkbenchPhase.AfterRestored);
 //#endregion
 
+//#region Sign-in editor (Cursor-like onboarding)
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(
+		LucosSignInEditorPane,
+		LucosSignInEditorPane.ID,
+		localize('lucos.signIn.editorPaneTitle', "Lucos Sign In"),
+	),
+	[new SyncDescriptor(LucosSignInEditorInput)]
+);
+//#endregion
+
 //#region Auth (TW-198)
 registerAction2(LucosLoginAction);
 registerAction2(LucosLogoutAction);
+registerAction2(LucosResetAuthAction);
 registerAction2(LucosGoogleLoginAction);
 registerWorkbenchContribution2(LucosAuthRestoreContribution.ID, LucosAuthRestoreContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(LucosAuthCallbackHandler.ID, LucosAuthCallbackHandler, WorkbenchPhase.AfterRestored);
 //#endregion
 
-//#region First-run onboarding (TW-178)
-// Must run after AfterRestored so LucosAuthRestoreContribution has already tried to resume the
-// stored JWT - that way we skip the prompt for returning authenticated users.
-registerWorkbenchContribution2(LucosFirstRunContribution.ID, LucosFirstRunContribution, WorkbenchPhase.AfterRestored);
+//#region Sign-in on startup (Cursor-like full-window overlay)
+// Runs after AfterRestored so LucosAuthRestoreContribution has already tried to resume a
+// stored session - returning signed-in users are skipped immediately.
+registerWorkbenchContribution2(LucosSignInOverlayContribution.ID, LucosSignInOverlayContribution, WorkbenchPhase.AfterRestored);
 //#endregion
 
 //#region Workspace-open -> auto-index (TW-178 / TW-220)
 registerWorkbenchContribution2(LucosWorkspaceIndexWatcher.ID, LucosWorkspaceIndexWatcher, WorkbenchPhase.AfterRestored);
+//#endregion
+
+//#region Account settings display (dynamic user info in settings page)
+registerWorkbenchContribution2(LucosAccountSettingsContribution.ID, LucosAccountSettingsContribution, WorkbenchPhase.AfterRestored);
 //#endregion
 
 //#region Editor & palette actions (TW-163 Cmd+K, TW-167)

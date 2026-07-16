@@ -1,0 +1,377 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as dom from '../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../base/browser/window.js';
+import { Disposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { IWorkbenchContribution } from '../../../common/contributions.js';
+import { ILucosAuthService } from '../common/lucosAuthService.js';
+
+/**
+ * Cursor-like full-window sign-in overlay.  Covers the entire workbench with a branded
+ * sign-in screen whenever the user is not authenticated.  Hides automatically via
+ * {@link ILucosAuthService.onDidChangeSignInState} as soon as sign-in completes.
+ */
+export class LucosSignInOverlayContribution extends Disposable implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.lucosSignInOverlay';
+
+	private readonly overlay: HTMLElement;
+
+	constructor(
+		@ILucosAuthService private readonly authService: ILucosAuthService,
+		@ILogService private readonly logService: ILogService,
+	) {
+		super();
+		this.logService.info('[LucosSignIn] overlay contribution created, waiting for session restore…');
+		this.overlay = this.buildOverlay(); // starts hidden
+		// Wait for session restore to complete before deciding to show — prevents flicker
+		// where a returning user's JWT is in the keychain but restore() hasn't resolved yet.
+		void authService.restorePromise.then(() => {
+			const signedIn = authService.isSignedIn;
+			const user = authService.signedInUser;
+			this.logService.info('[LucosSignIn] session restore complete —',
+				`isSignedIn=${signedIn}`,
+				`email=${user?.email ?? '(none)'}`,
+				`userId=${user?.userId ?? '(none)'}`,
+			);
+			if (!signedIn) {
+				this.logService.info('[LucosSignIn] no stored session → showing sign-in overlay');
+				this.setVisible(true);
+			} else {
+				this.logService.info('[LucosSignIn] stored session found → overlay stays hidden');
+			}
+		});
+		this._register(authService.onDidChangeSignInState(signedIn => {
+			this.logService.info(`[LucosSignIn] auth state changed → isSignedIn=${signedIn}, overlay visible=${!signedIn}`);
+			this.setVisible(!signedIn);
+		}));
+		this._register({ dispose: () => this.overlay.remove() });
+	}
+
+	private setVisible(visible: boolean): void {
+		this.logService.info(`[LucosSignIn] setVisible(${visible})`);
+		this.overlay.style.display = visible ? 'flex' : 'none';
+	}
+
+	private buildOverlay(): HTMLElement {
+		this.logService.info('[LucosSignIn] building overlay DOM');
+
+		const overlay = document.createElement('div');
+		Object.assign(overlay.style, {
+			position: 'fixed', top: '0', left: '0', right: '0', bottom: '0',
+			zIndex: '99999', display: 'none', alignItems: 'center', justifyContent: 'center',
+			background: 'var(--vscode-sideBar-background, #1e1e2e)',
+		});
+
+		// Card
+		const card = dom.append(overlay, document.createElement('div'));
+		Object.assign(card.style, {
+			background: 'var(--vscode-editorWidget-background, #252526)',
+			border: '1px solid var(--vscode-widget-border, rgba(127,127,127,0.2))',
+			borderRadius: '16px', boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
+			width: '400px', maxHeight: '92vh', overflowY: 'auto',
+			padding: '36px 32px', boxSizing: 'border-box',
+			display: 'flex', flexDirection: 'column',
+		});
+
+		// --- Shared helpers --------------------------------------------------
+
+		/** Builds the four-color Google "G" SVG logo. */
+		const googleIconSvg = (): SVGSVGElement => {
+			const ns = 'http://www.w3.org/2000/svg';
+			const svg = document.createElementNS(ns, 'svg') as SVGSVGElement;
+			svg.setAttribute('viewBox', '0 0 24 24');
+			svg.setAttribute('width', '18'); svg.setAttribute('height', '18');
+			svg.style.flexShrink = '0';
+			const shapes: [string, string][] = [
+				['#4285F4', 'M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z'],
+				['#34A853', 'M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z'],
+				['#FBBC05', 'M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z'],
+				['#EA4335', 'M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z'],
+			];
+			for (const [fill, d] of shapes) {
+				const p = document.createElementNS(ns, 'path');
+				p.setAttribute('fill', fill); p.setAttribute('d', d);
+				svg.appendChild(p);
+			}
+			return svg;
+		};
+
+		const buildGoogleBtn = (label: string): HTMLButtonElement => {
+			const btn = document.createElement('button');
+			btn.type = 'button';
+			Object.assign(btn.style, {
+				display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+				width: '100%', padding: '11px 16px', borderRadius: '8px', cursor: 'pointer',
+				background: 'var(--vscode-button-secondaryBackground, #f8f9fa)',
+				color: 'var(--vscode-button-secondaryForeground, #1f1f1f)',
+				border: '1.5px solid var(--vscode-button-border, #dadce0)',
+				fontSize: '14px', fontWeight: '500', fontFamily: 'inherit', outline: 'none',
+			});
+			btn.appendChild(googleIconSvg());
+			const span = document.createElement('span');
+			span.textContent = label;
+			btn.appendChild(span);
+			btn.addEventListener('mouseover', () => { btn.style.background = 'var(--vscode-button-secondaryHoverBackground, #f0f1f3)'; });
+			btn.addEventListener('mouseout', () => { btn.style.background = 'var(--vscode-button-secondaryBackground, #f8f9fa)'; });
+			btn.addEventListener('click', () => {
+				this.logService.info('[LucosSignIn] Google button clicked');
+				void this.authService.loginWithGoogle();
+			});
+			return btn;
+		};
+
+		const buildDivider = (text: string): HTMLElement => {
+			const row = document.createElement('div');
+			Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '10px', margin: '18px 0' });
+			const line = () => { const l = document.createElement('div'); Object.assign(l.style, { flex: '1', height: '1px', background: 'var(--vscode-editorGroup-border, #3c3c3c)' }); return l; };
+			const lbl = document.createElement('span');
+			lbl.textContent = text;
+			Object.assign(lbl.style, { fontSize: '12px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', whiteSpace: 'nowrap' });
+			row.appendChild(line()); row.appendChild(lbl); row.appendChild(line());
+			return row;
+		};
+
+		const makeInput = (parent: HTMLElement, labelText: string, type: string, placeholder: string, autocomplete?: string) => {
+			const wrap = document.createElement('div');
+			Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '14px' });
+			const lbl = document.createElement('label');
+			lbl.textContent = labelText;
+			Object.assign(lbl.style, { fontSize: '13px', fontWeight: '500', color: 'var(--vscode-foreground, #cccccc)' });
+			wrap.appendChild(lbl);
+			const input = document.createElement('input');
+			input.type = type; input.placeholder = placeholder;
+			if (autocomplete) { input.setAttribute('autocomplete', autocomplete); }
+			Object.assign(input.style, {
+				padding: '10px 12px', borderRadius: '8px', fontSize: '13px', outline: 'none',
+				border: '1.5px solid var(--vscode-input-border, #3c3c3c)',
+				background: 'var(--vscode-input-background, #3c3c3c)',
+				color: 'var(--vscode-input-foreground, #cccccc)',
+				width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
+			});
+			input.addEventListener('focus', () => { input.style.borderColor = 'var(--vscode-focusBorder, #6366f1)'; input.style.outline = '1px solid var(--vscode-focusBorder, #6366f1)'; });
+			input.addEventListener('blur', () => { input.style.borderColor = 'var(--vscode-input-border, #3c3c3c)'; input.style.outline = 'none'; });
+			wrap.appendChild(input);
+			parent.appendChild(wrap);
+			return { wrap, input };
+		};
+
+		const makePasswordInput = (parent: HTMLElement, labelText: string, placeholder: string, autocomplete?: string) => {
+			const { wrap, input } = makeInput(parent, labelText, 'password', placeholder, autocomplete);
+			input.style.paddingRight = '42px';
+			const inputWrap = document.createElement('div');
+			Object.assign(inputWrap.style, { position: 'relative', width: '100%' });
+			wrap.removeChild(input);
+			inputWrap.appendChild(input);
+			const eye = document.createElement('button');
+			eye.type = 'button';
+			Object.assign(eye.style, {
+				position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+				background: 'none', border: 'none', cursor: 'pointer', padding: '3px',
+				color: 'var(--vscode-descriptionForeground, #9d9d9d)',
+				display: 'flex', alignItems: 'center',
+			});
+			const eyeSpan = document.createElement('span');
+			eyeSpan.className = 'codicon codicon-eye';
+			Object.assign(eyeSpan.style, { fontSize: '14px' });
+			eye.appendChild(eyeSpan);
+			eye.addEventListener('click', () => {
+				const shown = input.type === 'text';
+				input.type = shown ? 'password' : 'text';
+				eyeSpan.className = shown ? 'codicon codicon-eye' : 'codicon codicon-eye-closed';
+			});
+			inputWrap.appendChild(eye);
+			wrap.appendChild(inputWrap);
+			return { wrap, input };
+		};
+
+		const makeSubmitBtn = (parent: HTMLElement, label: string): HTMLButtonElement => {
+			const btn = document.createElement('button');
+			btn.type = 'button'; btn.textContent = label;
+			Object.assign(btn.style, {
+				width: '100%', padding: '12px 0', borderRadius: '8px', border: 'none',
+				background: 'linear-gradient(90deg, #6366f1 0%, #06b6d4 100%)',
+				color: '#ffffff', fontSize: '14px', fontWeight: '600',
+				cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.3px',
+			});
+			btn.addEventListener('mouseover', () => { btn.style.opacity = '0.88'; });
+			btn.addEventListener('mouseout', () => { btn.style.opacity = '1'; });
+			parent.appendChild(btn);
+			return btn;
+		};
+
+		const makeErrorEl = (parent: HTMLElement): HTMLElement => {
+			const el = document.createElement('div');
+			Object.assign(el.style, { fontSize: '12px', color: 'var(--vscode-errorForeground, #f48771)', display: 'none', lineHeight: '1.4', marginBottom: '10px' });
+			parent.appendChild(el);
+			return el;
+		};
+
+		const setError = (el: HTMLElement, msg: string) => { el.textContent = msg; el.style.display = msg ? 'block' : 'none'; };
+
+		const setSubmitting = (btn: HTMLButtonElement, inputs: HTMLInputElement[], loading: boolean, loadingLabel?: string, restoreLabel?: string) => {
+			btn.disabled = loading;
+			btn.style.opacity = loading ? '0.6' : '1';
+			if (loading && loadingLabel) { btn.textContent = loadingLabel; }
+			if (!loading && restoreLabel) { btn.textContent = restoreLabel; }
+			for (const inp of inputs) { inp.disabled = loading; }
+		};
+
+		// --- Logo header (shared) -------------------------------------------
+		const logoRow = dom.append(card, document.createElement('div'));
+		Object.assign(logoRow.style, { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '28px' });
+		const logoBox = dom.append(logoRow, document.createElement('div'));
+		Object.assign(logoBox.style, {
+			width: '30px', height: '30px', borderRadius: '7px',
+			background: 'linear-gradient(135deg, #6366f1 0%, #06b6d4 100%)',
+			display: 'flex', alignItems: 'center', justifyContent: 'center',
+			fontSize: '15px', color: '#fff',
+		});
+		// allow-any-unicode-next-line
+		logoBox.textContent = '✦';
+		const logoText = dom.append(logoRow, document.createElement('div'));
+		logoText.textContent = 'LUCOS';
+		Object.assign(logoText.style, { fontSize: '15px', fontWeight: '700', letterSpacing: '2px', color: 'var(--vscode-foreground, #cccccc)' });
+
+		// === SIGN UP PANEL (default) =========================================
+		const signUpPanel = dom.append(card, document.createElement('div'));
+		Object.assign(signUpPanel.style, { display: 'flex', flexDirection: 'column' });
+
+		const suTitle = dom.append(signUpPanel, document.createElement('div'));
+		suTitle.textContent = localize('lucos.signUp.title', "Create your account");
+		Object.assign(suTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground, #cccccc)', marginBottom: '4px' });
+
+		const suSubtitle = dom.append(signUpPanel, document.createElement('div'));
+		suSubtitle.textContent = localize('lucos.signUp.subtitle', "Get started with lucos.com in seconds.");
+		Object.assign(suSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', marginBottom: '20px' });
+
+		signUpPanel.appendChild(buildGoogleBtn(localize('lucos.signUp.google', "Sign up with Google")));
+		signUpPanel.appendChild(buildDivider(localize('lucos.signUp.or', "or sign up with email")));
+
+		const { input: suNameInput } = makeInput(signUpPanel, localize('lucos.signUp.name', "Full name"), 'text', 'Jane Doe', 'name');
+		const { input: suEmailInput } = makeInput(signUpPanel, localize('lucos.signUp.workEmail', "Work email"), 'email', 'you@company.com', 'email');
+		const { input: suPasswordInput } = makePasswordInput(signUpPanel, localize('lucos.signUp.password', "Password"), '8+ chars, upper, lower & symbol', 'new-password');
+
+		// Terms row
+		const termsRow = document.createElement('div');
+		Object.assign(termsRow.style, { display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '18px' });
+		const termsCheck = document.createElement('input');
+		termsCheck.type = 'checkbox';
+		Object.assign(termsCheck.style, { marginTop: '2px', cursor: 'pointer', flexShrink: '0', accentColor: '#6366f1' });
+		const termsLbl = document.createElement('span');
+		termsLbl.textContent = localize('lucos.signUp.terms', "I agree to the Terms & Privacy Policy");
+		Object.assign(termsLbl.style, { fontSize: '12px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', lineHeight: '1.5' });
+		termsRow.appendChild(termsCheck); termsRow.appendChild(termsLbl);
+		signUpPanel.appendChild(termsRow);
+
+		const suError = makeErrorEl(signUpPanel);
+		const suBtn = makeSubmitBtn(signUpPanel, localize('lucos.signUp.submit', "Create account"));
+		suBtn.style.marginBottom = '18px';
+
+		const suFooter = dom.append(signUpPanel, document.createElement('div'));
+		Object.assign(suFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)' });
+		suFooter.appendChild(document.createTextNode(localize('lucos.signUp.haveAccount', "Already have an account? ")));
+		const suSignInLink = document.createElement('span');
+		suSignInLink.textContent = localize('lucos.signUp.signInLink', "Sign in");
+		Object.assign(suSignInLink.style, { color: 'var(--vscode-textLink-foreground, #06b6d4)', cursor: 'pointer', fontWeight: '600' });
+		suFooter.appendChild(suSignInLink);
+
+		// === SIGN IN PANEL ===================================================
+		const signInPanel = dom.append(card, document.createElement('div'));
+		Object.assign(signInPanel.style, { display: 'none', flexDirection: 'column' });
+
+		const siTitle = dom.append(signInPanel, document.createElement('div'));
+		siTitle.textContent = localize('lucos.signIn.pageTitle', "Welcome back");
+		Object.assign(siTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground, #cccccc)', marginBottom: '4px' });
+
+		const siSubtitle = dom.append(signInPanel, document.createElement('div'));
+		siSubtitle.textContent = localize('lucos.signIn.pageSubtitle', "Sign in to your Lucos account");
+		Object.assign(siSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', marginBottom: '20px' });
+
+		signInPanel.appendChild(buildGoogleBtn(localize('lucos.signIn.google', "Sign in with Google")));
+		signInPanel.appendChild(buildDivider(localize('lucos.signIn.or', "or sign in with email")));
+
+		const { input: siEmailInput } = makeInput(signInPanel, localize('lucos.signIn.email', "Email"), 'email', 'you@company.com', 'email');
+		const { input: siPasswordInput } = makePasswordInput(signInPanel, localize('lucos.signIn.password', "Password"), 'Your password', 'current-password');
+		siPasswordInput.parentElement!.parentElement!.style.marginBottom = '18px';
+
+		const siError = makeErrorEl(signInPanel);
+		const siBtn = makeSubmitBtn(signInPanel, localize('lucos.signIn.submit', "Sign In"));
+		siBtn.style.marginBottom = '18px';
+
+		const siFooter = dom.append(signInPanel, document.createElement('div'));
+		Object.assign(siFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)' });
+		siFooter.appendChild(document.createTextNode(localize('lucos.signIn.noAccount', "Don't have an account? ")));
+		const siSignUpLink = document.createElement('span');
+		siSignUpLink.textContent = localize('lucos.signIn.signUpLink', "Sign up");
+		Object.assign(siSignUpLink.style, { color: 'var(--vscode-textLink-foreground, #06b6d4)', cursor: 'pointer', fontWeight: '600' });
+		siFooter.appendChild(siSignUpLink);
+
+		// --- Panel switch ----------------------------------------------------
+		const showSignUp = () => { signUpPanel.style.display = 'flex'; signInPanel.style.display = 'none'; setError(suError, ''); };
+		const showSignIn = () => { signInPanel.style.display = 'flex'; signUpPanel.style.display = 'none'; setError(siError, ''); };
+		this._register(dom.addDisposableListener(suSignInLink, 'click', showSignIn));
+		this._register(dom.addDisposableListener(siSignUpLink, 'click', showSignUp));
+
+		// --- Sign Up submit --------------------------------------------------
+		suBtn.addEventListener('click', async () => {
+			const name = suNameInput.value.trim();
+			const email = suEmailInput.value.trim();
+			const password = suPasswordInput.value;
+			setError(suError, '');
+			if (!name) { setError(suError, localize('lucos.signUp.err.name', "Please enter your full name.")); return; }
+			if (!email) { setError(suError, localize('lucos.signUp.err.email', "Please enter your email address.")); return; }
+			if (!password) { setError(suError, localize('lucos.signUp.err.password', "Please enter a password.")); return; }
+			if (!termsCheck.checked) { setError(suError, localize('lucos.signUp.err.terms', "Please agree to the Terms & Privacy Policy.")); return; }
+
+			setSubmitting(suBtn, [suNameInput, suEmailInput, suPasswordInput], true, localize('lucos.loading', "Please wait\u2026"));
+			try {
+				this.logService.info('[LucosSignIn] submitting registration', `email=${email}`);
+				await this.authService.register(email, password, name);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.logService.error('[LucosSignIn] registration failed:', msg);
+				setError(suError, msg);
+				setSubmitting(suBtn, [suNameInput, suEmailInput, suPasswordInput], false, undefined, localize('lucos.signUp.submit', "Create account"));
+			}
+		});
+
+		// --- Sign In submit --------------------------------------------------
+		siBtn.addEventListener('click', async () => {
+			const email = siEmailInput.value.trim();
+			const password = siPasswordInput.value;
+			setError(siError, '');
+			if (!email) { setError(siError, localize('lucos.signIn.err.email', "Please enter your email address.")); return; }
+			if (!password) { setError(siError, localize('lucos.signIn.err.password', "Please enter a password.")); return; }
+
+			setSubmitting(siBtn, [siEmailInput, siPasswordInput], true, localize('lucos.loading', "Please wait\u2026"));
+			try {
+				this.logService.info('[LucosSignIn] submitting email sign-in', `email=${email}`);
+				await this.authService.loginWithEmail(email, password);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.logService.error('[LucosSignIn] sign-in failed:', msg);
+				setError(siError, msg);
+				setSubmitting(siBtn, [siEmailInput, siPasswordInput], false, undefined, localize('lucos.signIn.submit', "Sign In"));
+			}
+		});
+
+		// --- Keyboard navigation ---------------------------------------------
+		suNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') { suEmailInput.focus(); } });
+		suEmailInput.addEventListener('keydown', e => { if (e.key === 'Enter') { suPasswordInput.focus(); } });
+		suPasswordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { suBtn.click(); } });
+		siEmailInput.addEventListener('keydown', e => { if (e.key === 'Enter') { siPasswordInput.focus(); } });
+		siPasswordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { siBtn.click(); } });
+
+		this.logService.info('[LucosSignIn] overlay DOM appended to document.body');
+		mainWindow.document.body.appendChild(overlay);
+		return overlay;
+	}
+}
+
+

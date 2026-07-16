@@ -330,8 +330,8 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	//#endregion
 
 	private getEntryProps(): IStatusbarEntry {
-		let text = '$(copilot)';
-		let ariaLabel = localize('chatStatusAria', "Copilot status");
+		let text = '$(sparkle)';
+		let ariaLabel = localize('chatStatusAria', "Lucos AI status");
 		let kind: StatusbarEntryKind | undefined;
 
 		if (isNewUser(this.chatEntitlementService)) {
@@ -351,8 +351,8 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 
 			// Disabled
 			if (this.chatEntitlementService.sentiment.disabled || this.chatEntitlementService.sentiment.untrusted) {
-				text = '$(copilot-unavailable)';
-				ariaLabel = localize('copilotDisabledStatus', "Copilot disabled");
+				text = '$(sparkle)';
+				ariaLabel = localize('copilotDisabledStatus', "Lucos AI disabled");
 			}
 
 			// Signed out — keep showing Sign-in affordance even when BYOK models are present
@@ -364,34 +364,34 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 			// Quota Exceeded (all tracked plans share the premium chat quota)
 			else if (isTrackedEntitlement(this.chatEntitlementService.entitlement) && isQuotaBlocked(quotas)) {
 				const quotaWarning = localize('chatQuotaExceededStatus', "Quota reached");
-				text = `$(copilot-warning) ${quotaWarning}`;
+				text = `$(chat-sparkle-warning) ${quotaWarning}`;
 				ariaLabel = quotaWarning;
 				kind = 'prominent';
 			}
 
-			// Copilot Resumed (limit reset after the user was previously blocked)
+			// Lucos AI Resumed (limit reset after the user was previously blocked)
 			else if (this.quotaResumeState === 'resumed') {
-				const resumedLabel = localize('chatResumedStatus', "Copilot Resumed");
-				text = `$(copilot) ${resumedLabel}`;
+				const resumedLabel = localize('chatResumedStatus', "Lucos AI Resumed");
+				text = `$(sparkle) ${resumedLabel}`;
 				ariaLabel = resumedLabel;
 				kind = 'prominent';
 			}
 
 			// Completions Disabled
 			else if (this.editorService.activeTextEditorLanguageId && !isCompletionsEnabled(this.configurationService, this.editorService.activeTextEditorLanguageId)) {
-				text = '$(copilot-unavailable)';
+				text = '$(sparkle)';
 				ariaLabel = localize('completionsDisabledStatus', "Inline suggestions disabled");
 			}
 
 			// Completions Snoozed
 			else if (this.completionsService.isSnoozing()) {
-				text = '$(copilot-snooze)';
+				text = '$(sparkle)';
 				ariaLabel = localize('completionsSnoozedStatus', "Inline suggestions snoozed");
 			}
 		}
 
 		const baseResult = {
-			name: localize('chatStatus', "Copilot Status"),
+			name: localize('chatStatus', "Lucos AI Status"),
 			text,
 			ariaLabel,
 			command: ShowTooltipCommand,
@@ -408,9 +408,9 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 		const showSignInLabel = !this.isSignInTitleBarAffordanceVisible();
 		const signInLabel = localize('signIn', "Sign In");
 		return {
-			name: localize('chatStatus', "Copilot Status"),
-			text: showSignInLabel ? `$(copilot) ${signInLabel}` : '$(copilot)',
-			ariaLabel: showSignInLabel ? signInLabel : localize('chatStatusAria', "Copilot status"),
+			name: localize('chatStatus', "Lucos AI Status"),
+			text: showSignInLabel ? `$(sparkle) ${signInLabel}` : '$(sparkle)',
+			ariaLabel: showSignInLabel ? signInLabel : localize('chatStatusAria', "Lucos AI status"),
 			command: CHAT_SETUP_ACTION_ID,
 			showInAllWindows: true,
 			kind: undefined,
