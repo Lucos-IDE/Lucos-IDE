@@ -486,6 +486,12 @@ jobs:
         run: node build/lib/builtInExtensions.ts
         env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
 
+      - name: Download Explorer context-menu DLL
+        run: node build/win32/explorer-dll-fetcher.ts .build/win32/appx
+        env:
+          VSCODE_ARCH: x64
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Compile & package
         shell: pwsh
         run: |
@@ -506,6 +512,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare AppX package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkBins = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\makeappx.exe' -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $sdkBins) { throw 'makeappx.exe not found (Windows SDK required)' }
+          $env:PATH = "$(Split-Path $sdkBins.FullName -Parent);$env:PATH"
+
+          $appRoot = Join-Path $env:RUNNER_WORKSPACE 'Lucos-win32-x64'
+          $manifestDir = Join-Path $appRoot 'appx\manifest'
+          $appxOut = Join-Path $appRoot 'appx\code_x64.appx'
+          if (-not (Test-Path $manifestDir)) { throw "AppX manifest dir missing: $manifestDir" }
+
+          makeappx pack /d $manifestDir /p $appxOut /nv
+          Remove-Item -Path $manifestDir -Recurse -Force
+          if (-not (Test-Path $appxOut)) { throw "AppX not created: $appxOut" }
+          Write-Host "Created $appxOut"
 
       - name: Stage Inno updater tools
         run: npm run gulp lucos-win32-x64-inno-updater
