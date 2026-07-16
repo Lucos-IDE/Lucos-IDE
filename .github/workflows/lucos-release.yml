@@ -263,6 +263,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # min-ci packaging expects .build/extensions/copilot (Azure downloads a
+      # VSIX; local/Lucos builds compile from source instead).
+      - name: Build built-in Copilot extension
+        run: |
+          set -e
+          if [[ ! -d extensions/copilot/node_modules ]]; then
+            npm --prefix extensions/copilot install
+          fi
+          npm --prefix extensions/copilot run compile
+          npm run gulp compile-copilot-extension-build
+          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Package macOS arm64 app
         run: npm run gulp lucos-darwin-arm64-min-ci
         env:
@@ -438,6 +452,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build built-in Copilot extension
+        run: |
+          set -e
+          if [[ ! -d extensions/copilot/node_modules ]]; then
+            npm --prefix extensions/copilot install
+          fi
+          npm --prefix extensions/copilot run compile
+          npm run gulp compile-copilot-extension-build
+          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Package macOS x64 app
         run: npm run gulp lucos-darwin-x64-min-ci
         env:
@@ -593,6 +619,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build built-in Copilot extension
+        shell: pwsh
+        run: |
+          if (-not (Test-Path extensions/copilot/node_modules)) {
+            npm --prefix extensions/copilot install
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          npm --prefix extensions/copilot run compile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run gulp compile-copilot-extension-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path .build/extensions/copilot/node_modules/@github/copilot/sdk)) {
+            throw "Copilot SDK missing after compile-copilot-extension-build"
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Package Windows x64 app
         run: npm run gulp lucos-win32-x64-min-ci
         env:
@@ -705,6 +748,18 @@ jobs:
 
       - name: Compile (core-ci)
         run: npm run gulp core-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build built-in Copilot extension
+        run: |
+          set -e
+          if [[ ! -d extensions/copilot/node_modules ]]; then
+            npm --prefix extensions/copilot install
+          fi
+          npm --prefix extensions/copilot run compile
+          npm run gulp compile-copilot-extension-build
+          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
