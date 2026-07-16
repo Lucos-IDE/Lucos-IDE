@@ -359,7 +359,7 @@ jobs:
           node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
           python3 build/darwin/patch-dmg.py \
             "$DMG_OUT/Lucos-darwin-arm64.dmg" \
-            resources/darwin/disk.icns || true
+            resources/darwin/code.icns || true
           # Rename to Lucos branding
           mv "$DMG_OUT/Lucos-darwin-arm64.dmg" \
              "$RUNNER_TEMP/Lucos-darwin-arm64.dmg"

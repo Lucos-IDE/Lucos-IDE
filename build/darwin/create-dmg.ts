@@ -162,18 +162,9 @@ async function main(buildDir?: string, outDir?: string): Promise<void> {
 	const artifactPath = path.join(outDir, `${dmgName}.dmg`);
 	const backgroundPath = path.join(import.meta.dirname, `dmg-background-${quality}.tiff`);
 	const diskIconPath = path.join(root, 'resources', 'darwin', 'code.icns');
-	let title = 'Lucos';
-	switch (quality) {
-		case 'stable':
-			title = 'VS Code';
-			break;
-		case 'insider':
-			title = 'VS Code Insiders';
-			break;
-		case 'exploration':
-			title = 'VS Code Exploration';
-			break;
-	}
+	// Volume title becomes /Volumes/<title>. Keep Lucos branding — "VS Code"
+	// left LaunchServices pointing at ejected DMG paths and hung launches.
+	const title = product.nameShort || 'Lucos';
 
 	if (!fs.existsSync(appPath)) {
 		throw new Error(`App path does not exist: ${appPath}`);
