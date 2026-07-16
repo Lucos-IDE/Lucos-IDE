@@ -170,4 +170,8 @@ for (const arch of ['x64', 'arm64']) {
 			task.task(task.define(`lucos-win32-${arch}-${target}-setup`, src));
 		}
 	}
+	const innoUpdater = task.task(`vscode-win32-${arch}-inno-updater`) as task.Task;
+	if (innoUpdater) {
+		task.task(task.define(`lucos-win32-${arch}-inno-updater`, innoUpdater));
+	}
 }
