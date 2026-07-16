@@ -3,7 +3,7 @@
 # Triggers
 # ────────────────────────────────────────────────────────────────────────────
 #  pull_request → main / release/*  : compile + unit tests  (fast gate)
-#  push → main                       : compile + tests + all 4 platform builds
+#  push → lucos-prod                 : compile + tests + all 4 platform builds
 #  push → v* tag                     : same as main + signed artifacts
 #
 # Secrets required for signed release builds (tag pushes)
@@ -24,7 +24,7 @@ on:
   pull_request:
     branches: [main, 'release/*']
   push:
-    branches: [main]
+    branches: [lucos-prod]
     tags: ['v[0-9]+.*']
 
 concurrency:
