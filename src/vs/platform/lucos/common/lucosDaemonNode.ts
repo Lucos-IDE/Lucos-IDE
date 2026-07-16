@@ -42,4 +42,11 @@ export interface ILucosDaemonNodeService {
 
 	/** Begins indexing (TW-220); the stream reuses {@link onDynamicAgentTaskEvent}/{@link cancelAgentTask}. */
 	startIndexWorkspace(request: ILucosIndexWorkspaceRequest): Promise<{ taskId: string }>;
+
+	/**
+	 * Stops a daemon process that this Lucos instance spawned.
+	 * No-op when the daemon was adopted (e.g. external `make dev`).
+	 * Wired from electron-main `onWillShutdown` (node layer cannot import electron-main).
+	 */
+	shutdownOwnedDaemon(): Promise<void>;
 }

@@ -6,9 +6,10 @@ format = 'ULMO'
 badge_icon = {{BADGE_ICON}}
 background = {{BACKGROUND}}
 
-# Volume size
-size = '1.5g'
-shrink = False
+# Volume size — must exceed Lucos.app (~1.4G+) plus HFS/layout overhead.
+# shrink=True compresses the final ULMO image after the copy.
+size = '3g'
+shrink = True
 
 # Files and symlinks
 files = [{{APP_PATH}}]

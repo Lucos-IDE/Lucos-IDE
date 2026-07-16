@@ -52,8 +52,15 @@ export function getDaemonStream(platform: string, arch: string): NodeJS.Readable
 	}
 
 	const resourceName = getDaemonResourceName(platform);
+	const parsed = path.parse(resourceName);
 	const stream = vfs.src(binaryPath, { base: path.dirname(binaryPath) })
-		.pipe(rename(() => ({ dirname: 'resources', basename: path.parse(resourceName).name, extname: path.parse(resourceName).ext })));
+		.pipe(rename(f => {
+			// Mutate the vinyl file in place (gulp-rename object-return form was
+			// preserving the staged basename in some package merges).
+			f.dirname = 'resources';
+			f.basename = parsed.name;
+			f.extname = parsed.ext;
+		}));
 
 	// Set executable bit on non-Windows platforms.
 	if (platform !== 'win32') {
