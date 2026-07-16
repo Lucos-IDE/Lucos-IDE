@@ -21,7 +21,11 @@ import product from '../../product.json' with { type: 'json' };
 // If true, we fail the build if there are new dependencies found during that task.
 // The reference dependencies, which one has to update when the new dependencies
 // are valid, are in dep-lists.ts
-const FAIL_BUILD_FOR_NEW_DEPENDENCIES: boolean = true;
+//
+// Lucos: keep false so .deb packaging uses freshly computed deps without
+// requiring a dep-lists.ts sync whenever Electron/native modules drift
+// (and when tunnel CLI is omitted from the package).
+const FAIL_BUILD_FOR_NEW_DEPENDENCIES: boolean = false;
 
 // Based on https://source.chromium.org/chromium/chromium/src/+/refs/tags/148.0.7778.271:chrome/installer/linux/BUILD.gn;l=64-80
 // and the Linux Archive build

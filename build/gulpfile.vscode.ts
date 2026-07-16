@@ -541,7 +541,15 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 function hasAuthenticodeSignature(filePath: string): Promise<boolean> {
 	return new Promise((resolve, reject) => {
 		const proc = cp.spawn('signtool.exe', ['verify', '/pa', filePath]);
-		proc.on('error', reject);
+		proc.on('error', (err: NodeJS.ErrnoException) => {
+			// Unsigned CI runners often lack the Windows SDK / signtool on PATH.
+			// Treat that as "no signature" so rcedit can still patch version resources.
+			if (err.code === 'ENOENT') {
+				resolve(false);
+				return;
+			}
+			reject(err);
+		});
 		proc.on('exit', code => resolve(code === 0));
 	});
 }
