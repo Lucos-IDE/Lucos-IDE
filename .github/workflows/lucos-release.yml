@@ -572,7 +572,7 @@ jobs:
           node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
           python3 build/darwin/patch-dmg.py \
             "$DMG_OUT/Lucos-darwin-x64.dmg" \
-            resources/darwin/disk.icns || true
+            resources/darwin/code.icns || true
           mv "$DMG_OUT/Lucos-darwin-x64.dmg" \
              "$RUNNER_TEMP/Lucos-darwin-x64.dmg"
           echo "DMG_PATH=$RUNNER_TEMP/Lucos-darwin-x64.dmg" >> "$GITHUB_ENV"
