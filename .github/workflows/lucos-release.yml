@@ -282,6 +282,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Branch/unsigned builds: ad-hoc sign so Gatekeeper does not report the
+      # app as "damaged" after download. Tag builds use Developer ID below.
+      - name: Ad-hoc codesign macOS app (unsigned builds)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -e
+          APP="$RUNNER_WORKSPACE/Lucos-darwin-arm64/Lucos.app"
+          test -d "$APP"
+          xattr -cr "$APP" || true
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+
       - name: Import Apple Developer certificate (signed releases only)
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -468,6 +480,16 @@ jobs:
         run: npm run gulp lucos-darwin-x64-min-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ad-hoc codesign macOS app (unsigned builds)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -e
+          APP="$RUNNER_WORKSPACE/Lucos-darwin-x64/Lucos.app"
+          test -d "$APP"
+          xattr -cr "$APP" || true
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
 
       - name: Import Apple Developer certificate (signed releases only)
         if: startsWith(github.ref, 'refs/tags/')

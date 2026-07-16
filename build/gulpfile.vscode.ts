@@ -578,6 +578,21 @@ async function stripAuthenticodeSignature(filePath: string): Promise<void> {
 	});
 }
 
+function isWindowsNativeBinaryPath(relPath: string): boolean {
+	const normalized = relPath.replace(/\\/g, '/').toLowerCase();
+	// Copilot / agent SDKs ship multi-arch natives; only patch Windows PE files.
+	if (/(^|\/)(darwin|linux|linuxmusl|freebsd|android)(-|\/)/.test(normalized)) {
+		return false;
+	}
+	if (/-(darwin|linux|linuxmusl|freebsd)(\/|$)/.test(normalized)) {
+		return false;
+	}
+	if (/\/(x64|arm64|ia32|arm)-(darwin|linux|linuxmusl)\//.test(normalized)) {
+		return false;
+	}
+	return true;
+}
+
 function patchWin32DependenciesTask(destinationFolderName: string) {
 	const cwd = path.join(path.dirname(root), destinationFolderName);
 
@@ -588,7 +603,7 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 			glob('**/rg.exe', { cwd }),
 			glob('**/tgrep.exe', { cwd }),
 			glob('**/*explorer_command*.dll', { cwd }),
-		])).flatMap(o => o);
+		])).flatMap(o => o).filter(isWindowsNativeBinaryPath);
 		const packageJson = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'package.json'), 'utf8'));
 		const product = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'product.json'), 'utf8'));
 		const baseVersion = packageJson.version.replace(/-.*$/, '');
@@ -598,19 +613,23 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 			const fullPath = path.join(cwd, dep);
 
 			await stripAuthenticodeSignature(fullPath);
-			await rcedit(fullPath, {
-				'file-version': baseVersion,
-				'version-string': {
-					'CompanyName': 'Microsoft Corporation',
-					'FileDescription': product.nameLong,
-					'FileVersion': packageJson.version,
-					'InternalName': basename,
-					'LegalCopyright': 'Copyright (C) 2026 Microsoft. All rights reserved',
-					'OriginalFilename': basename,
-					'ProductName': product.nameLong,
-					'ProductVersion': packageJson.version,
-				}
-			});
+			try {
+				await rcedit(fullPath, {
+					'file-version': baseVersion,
+					'version-string': {
+						'CompanyName': 'Microsoft Corporation',
+						'FileDescription': product.nameLong,
+						'FileVersion': packageJson.version,
+						'InternalName': basename,
+						'LegalCopyright': 'Copyright (C) 2026 Microsoft. All rights reserved',
+						'OriginalFilename': basename,
+						'ProductName': product.nameLong,
+						'ProductVersion': packageJson.version,
+					}
+				});
+			} catch (err) {
+				console.warn(`[patchWin32Dependencies] Skipping ${dep}: ${err instanceof Error ? err.message : String(err)}`);
+			}
 		});
 
 		await Promise.all(patchPromises);
