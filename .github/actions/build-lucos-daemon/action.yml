@@ -1,0 +1,65 @@
+name: Build & stage lucos-daemon
+description: Checkout Lucos-IDE/local-daemon, build the Go binary, stage it under .build/daemon/
+
+inputs:
+  platform:
+    description: Target platform (darwin, linux, win32)
+    required: true
+  arch:
+    description: Target arch (arm64, x64)
+    required: true
+  token:
+    description: GitHub token with read access to Lucos-IDE/local-daemon
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.x'
+        cache: false
+
+    - name: Checkout local-daemon
+      uses: actions/checkout@v4
+      with:
+        repository: Lucos-IDE/local-daemon
+        path: .build/src/local-daemon
+        token: ${{ inputs.token }}
+
+    - name: Build and stage daemon binary
+      shell: bash
+      run: |
+        set -euo pipefail
+        platform='${{ inputs.platform }}'
+        arch='${{ inputs.arch }}'
+        case "${platform}" in
+          darwin) goos=darwin ;;
+          linux)  goos=linux ;;
+          win32)  goos=windows ;;
+          *) echo "Unsupported platform: ${platform}" >&2; exit 1 ;;
+        esac
+        case "${arch}" in
+          x64)   goarch=amd64 ;;
+          arm64) goarch=arm64 ;;
+          *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;;
+        esac
+        ext=''
+        if [[ "${platform}" == 'win32' ]]; then
+          ext='.exe'
+        fi
+        out_name="lucos-daemon-${platform}-${arch}${ext}"
+        mkdir -p .build/daemon
+        (
+          cd .build/src/local-daemon
+          export GOWORK=off
+          GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
+            go build -o "../../daemon/${out_name}" ./cmd/lucos-daemon
+        )
+        if [[ "${platform}" != 'win32' ]]; then
+          chmod +x ".build/daemon/${out_name}"
+        fi
+        test -f ".build/daemon/${out_name}"
+        ls -la ".build/daemon/${out_name}"
+        echo "Staged ${out_name}"

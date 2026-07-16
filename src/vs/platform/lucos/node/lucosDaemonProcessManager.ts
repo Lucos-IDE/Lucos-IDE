@@ -90,7 +90,9 @@ export class LucosDaemonProcessManager extends Disposable {
 		const binary = this.options.resolveBinary();
 		if (!binary) {
 			this.logService.info('[lucosDaemon] No bundled daemon binary (dev build or missing package); skipping spawn');
-			return existing;
+			// Do not return a known-unhealthy/stale endpoint — callers would connect
+			// and hang or flap. Disconnected is the correct state until a binary exists.
+			return undefined;
 		}
 
 		await this.spawnDaemon(binary);

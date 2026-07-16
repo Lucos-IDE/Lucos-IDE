@@ -61,6 +61,9 @@ function ensureProtoOnDisk(): string {
 	return agentPath;
 }
 
+/** Default deadline for unary RPCs. Missing deadlines hang forever on a dead port. */
+const DEFAULT_UNARY_TIMEOUT_MS = 5_000;
+
 export class LucosGrpcClient extends Disposable {
 
 	private grpc: GrpcModule | undefined;
@@ -160,13 +163,16 @@ export class LucosGrpcClient extends Disposable {
 		return metadata;
 	}
 
-	private unary<T>(method: string, request: Record<string, unknown>): Promise<T> {
+	private unary<T>(method: string, request: Record<string, unknown>, timeoutMs = DEFAULT_UNARY_TIMEOUT_MS): Promise<T> {
 		return new Promise<T>((resolve, reject) => {
 			if (!this.client) {
 				reject(new Error('Lucos daemon not connected'));
 				return;
 			}
-			this.client[method](request, this.metadata(), (error: GrpcServiceError | null, response: T) => {
+			// Always set a deadline — without one, a dead/half-open localhost port
+			// can leave Health / SetCloudCredentials pending forever and freeze startup.
+			const options = { deadline: new Date(Date.now() + timeoutMs) };
+			this.client[method](request, this.metadata(), options, (error: GrpcServiceError | null, response: T) => {
 				if (error) {
 					reject(error);
 				} else {

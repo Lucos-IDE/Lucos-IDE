@@ -97,7 +97,7 @@ suite('LucosDaemonProcessManager', () => {
 		assert.strictEqual(mgr.ownsDaemon, false);
 	});
 
-	test('skips spawn when no binary and returns existing endpoint', async () => {
+	test('skips spawn when no binary and does not return unhealthy endpoint', async () => {
 		writeDaemonJson(50051, 'token-b');
 		const mgr = store.add(new LucosDaemonProcessManager(new NullLogService(), {
 			dataDir,
@@ -111,7 +111,7 @@ suite('LucosDaemonProcessManager', () => {
 
 		const endpoint = await mgr.ensureRunning();
 		assert.strictEqual(spawnCalls.length, 0);
-		assert.deepStrictEqual(endpoint, { address: '127.0.0.1:50051', token: 'token-b' });
+		assert.strictEqual(endpoint, undefined);
 	});
 
 	test('times out when daemon.json never appears after spawn', async () => {

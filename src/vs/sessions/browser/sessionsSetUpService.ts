@@ -256,7 +256,12 @@ class SessionsSetUpWidget extends Disposable {
 			const overlay = this._showLoadingOverlay();
 			this.dialogRef.value.add(overlay);
 
-			const account = await this.defaultAccountService.getDefaultAccount();
+			// Bound the wait — GitHub default-account init can hang forever when the
+			// auth provider never activates (common on Lucos builds that use Lucos auth).
+			const account = await Promise.race([
+				this.defaultAccountService.getDefaultAccount(),
+				new Promise<null>(resolve => disposableTimeout(() => resolve(null), 8_000)),
+			]);
 			if (this._store.isDisposed) {
 				return;
 			}
