@@ -119,7 +119,10 @@ const vscodeResourceIncludes = [
 	'out-build/vs/editor/common/languages/highlights/*.scm',
 
 	// Tree Sitter injection queries
-	'out-build/vs/editor/common/languages/injections/*.scm'
+	'out-build/vs/editor/common/languages/injections/*.scm',
+
+	// Lucos daemon gRPC proto (loaded by main process via FileAccess)
+	'out-build/vs/platform/lucos/node/lucosDaemon.embedded.proto'
 ];
 
 const vscodeResources = [

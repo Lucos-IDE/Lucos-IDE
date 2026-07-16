@@ -296,6 +296,9 @@ const desktopResourcePatterns = [
 	// Sessions - built-in prompts and skills
 	'vs/sessions/prompts/*.prompt.md',
 	'vs/sessions/skills/**/SKILL.md',
+
+	// Lucos daemon gRPC proto (loaded by main process via FileAccess)
+	'vs/platform/lucos/node/lucosDaemon.embedded.proto',
 ];
 
 // Resources for server target (minimal - no UI)
