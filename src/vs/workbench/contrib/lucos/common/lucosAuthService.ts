@@ -25,6 +25,9 @@ export interface ILucosAuthService {
 	/** The signed-in user's id and email, if available from keychain (no daemon required). */
 	readonly signedInUser: ILucosSignedInUser | undefined;
 
+	/** Resolves once restore() has completed (or determined there is no stored session). */
+	readonly restorePromise: Promise<void>;
+
 	/** Prompt for credentials, authenticate, persist the JWT, and hand it to the daemon. Returns true on success. */
 	login(): Promise<boolean>;
 
@@ -45,6 +48,18 @@ export interface ILucosAuthService {
 
 	/** Clear the stored JWT locally and in the daemon. */
 	logout(): Promise<void>;
+
+	/**
+	 * Sign in with email and password directly (no prompts). Throws with a user-facing
+	 * message on failure — callers are responsible for showing the error.
+	 */
+	loginWithEmail(email: string, password: string): Promise<void>;
+
+	/**
+	 * Register a new account with email and password. Throws with a user-facing
+	 * message on failure — callers are responsible for showing the error.
+	 */
+	register(email: string, password: string, name?: string): Promise<void>;
 
 	/** On startup: if a JWT is in the keychain, hand it to the daemon so the session resumes. */
 	restore(): Promise<void>;
