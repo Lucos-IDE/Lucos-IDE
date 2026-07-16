@@ -666,6 +666,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Copies build/win32/inno_updater.exe (+ vcruntime) into Lucos-win32-x64/tools
+      # so code.iss [Files] Source: "tools\*" succeeds.
+      - name: Stage Inno updater tools
+        run: npm run gulp lucos-win32-x64-inno-updater
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Windows system-setup installer
         # Pass --sign-lucos only when the PFX secret is set. An empty flag after
         # `--` becomes a blank gulp task name ("Task never defined: ").

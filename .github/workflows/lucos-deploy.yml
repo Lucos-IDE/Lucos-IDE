@@ -507,6 +507,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Stage Inno updater tools
+        run: npm run gulp lucos-win32-x64-inno-updater
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Windows installer (sign in production)
         shell: pwsh
         run: |
