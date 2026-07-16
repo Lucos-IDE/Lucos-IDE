@@ -600,7 +600,7 @@
 		line-height: 20px;
 
 		> .codicon {
-			font-size: 14px;
+			font-size: var(--vscode-codiconFontSize);
 			height: 20px;
 		}
 
@@ -615,7 +615,7 @@
 		/* Reserve space for the right-aligned toolbar so long titles
 		 * don't overlap the action icons. Sized to fit two 44px actions
 		 * (88px) plus a small gap. */
-		padding-right: 96px;
+		padding-right: var(--vscode-spacing-size400);
 	}
 
 	.session-item .session-title-row {
