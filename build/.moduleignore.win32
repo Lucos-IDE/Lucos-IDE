@@ -1,0 +1,10 @@
+# Drop non-Windows native binaries shipped inside multi-arch npm packages
+# (e.g. @anthropic-ai/claude-agent-sdk vendor audio-capture).
+**/vendor/**/*-darwin*/**
+**/vendor/**/*darwin*/**
+**/vendor/**/*-linux*/**
+**/vendor/**/*linux*/**
+**/prebuilds/darwin-*/**
+**/prebuilds/linux-*/**
+**/bin/darwin-*/**
+**/bin/linux-*/**
