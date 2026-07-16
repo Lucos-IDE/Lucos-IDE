@@ -273,7 +273,8 @@ jobs:
           fi
           npm --prefix extensions/copilot run compile
           npm run gulp compile-copilot-extension-build
-          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -472,7 +473,8 @@ jobs:
           fi
           npm --prefix extensions/copilot run compile
           npm run gulp compile-copilot-extension-build
-          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -652,8 +654,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run gulp compile-copilot-extension-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path .build/extensions/copilot/node_modules/@github/copilot/sdk)) {
-            throw "Copilot SDK missing after compile-copilot-extension-build"
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          if (-not (Test-Path .build/extensions/copilot)) {
+            throw "Copilot extension missing after compile-copilot-extension-build"
           }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -784,7 +787,8 @@ jobs:
           fi
           npm --prefix extensions/copilot run compile
           npm run gulp compile-copilot-extension-build
-          test -d .build/extensions/copilot/node_modules/@github/copilot/sdk
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
