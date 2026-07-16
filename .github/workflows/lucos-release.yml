@@ -130,14 +130,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # lucos-prod pushes are build-only: skip full hygiene/eslint gates that
-      # upstream enforces on main PRs but are not required to produce artifacts.
+      # lucos-prod pushes are build-only. Platform jobs each re-run core-ci, so
+      # this gate stays light: parallel core-ci + test-build-scripts on a 7GB
+      # ubuntu-22.04 runner often dies with exit 143 (SIGTERM/OOM) during
+      # tsgo-typecheck.
       - name: Compile (build gate)
         if: github.ref == 'refs/heads/lucos-prod'
-        run: |
-          npm exec -- npm-run-all2 -lp \
-            core-ci \
-            test-build-scripts
+        run: npm run test-build-scripts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
