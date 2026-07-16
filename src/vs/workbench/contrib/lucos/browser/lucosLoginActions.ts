@@ -4,14 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize2 } from '../../../../nls.js';
-import { Action2, MenuId } from '../../../../platform/actions/common/actions.js';
+import { Action2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
-import { LUCOS_SIGNED_OUT_CONTEXT } from './lucosCommands.js';
 
 const LUCOS_CATEGORY = localize2('lucos', "Lucos");
 
@@ -96,42 +94,3 @@ export class LucosAuthRestoreContribution extends Disposable implements IWorkben
 	}
 }
 
-/**
- * "Sign In to Lucos" button shown in the title bar when the user is not signed in.
- * Gated by the `lucosSignedOut` context key (set by LucosSignOutContextContribution).
- */
-export class LucosSignInTitleBarAction extends Action2 {
-	static readonly ID = 'lucos.signInTitleBar';
-	constructor() {
-		super({
-			id: LucosSignInTitleBarAction.ID,
-			title: localize2('lucos.signInTitleBar.title', "Sign In to Lucos"),
-			f1: false,
-			menu: [{
-				id: MenuId.TitleBarAdjacentCenter,
-				order: 1,
-				when: LUCOS_SIGNED_OUT_CONTEXT,
-			}],
-		});
-	}
-	override run(accessor: ServicesAccessor): Promise<boolean> {
-		return accessor.get(ILucosAuthService).loginWithGoogle();
-	}
-}
-
-/**
- * Keeps the `lucosSignedOut` context key in sync with the Lucos auth service so the
- * title bar "Sign In" button appears/disappears reactively.
- */
-export class LucosSignOutContextContribution extends Disposable implements IWorkbenchContribution {
-	static readonly ID = 'workbench.contrib.lucosSignOutContext';
-	constructor(
-		@IContextKeyService contextKeyService: IContextKeyService,
-		@ILucosAuthService lucosAuthService: ILucosAuthService,
-	) {
-		super();
-		const key = LUCOS_SIGNED_OUT_CONTEXT.bindTo(contextKeyService);
-		key.set(!lucosAuthService.isSignedIn);
-		this._register(lucosAuthService.onDidChangeSignInState(signedIn => key.set(!signedIn)));
-	}
-}

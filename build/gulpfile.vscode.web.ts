@@ -195,7 +195,7 @@ function packageTask(sourceFolderName: string, destinationFolderName: string) {
 			.pipe(filter(['**', '!**/package-lock.json']))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, '.webignore')));
 
-		const favicon = gulp.src('resources/server/favicon.ico', { base: 'resources/server' });
+		const favicon = gulp.src('resources/server/favicon.svg', { base: 'resources/server' });
 		const manifest = gulp.src('resources/server/manifest.json', { base: 'resources/server' });
 		const pwaicons = es.merge(
 			gulp.src('resources/server/code-192.png', { base: 'resources/server' }),
