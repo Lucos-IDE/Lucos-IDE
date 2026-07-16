@@ -508,12 +508,13 @@ jobs:
       - name: Build Windows installer (sign in production)
         shell: pwsh
         run: |
-          $signFlag = ''
-          if ('${{ needs.resolve-env.outputs.is_prod }}' -eq 'true' -and
-              $env:WINDOWS_PFX_DATA -ne '') {
-            $signFlag = '--sign-lucos'
+          $shouldSign = ('${{ needs.resolve-env.outputs.is_prod }}' -eq 'true') -and ($env:WINDOWS_PFX_DATA -ne '')
+          if ($shouldSign) {
+            npm run gulp lucos-win32-x64-system-setup -- --sign-lucos
+          } else {
+            npm run gulp lucos-win32-x64-system-setup
           }
-          npm run gulp lucos-win32-x64-system-setup -- $signFlag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
