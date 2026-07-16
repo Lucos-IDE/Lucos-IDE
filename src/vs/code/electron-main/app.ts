@@ -1406,8 +1406,12 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel(ipcExtensionHostStarterChannelName, extensionHostStarterChannel);
 
 		// Lucos Daemon
-		const lucosDaemonChannel = ProxyChannel.fromService(accessor.get(ILucosDaemonNodeService), disposables);
+		const lucosDaemonService = accessor.get(ILucosDaemonNodeService);
+		const lucosDaemonChannel = ProxyChannel.fromService(lucosDaemonService, disposables);
 		mainProcessElectronServer.registerChannel(ipcLucosDaemonChannelName, lucosDaemonChannel);
+		disposables.add(this.lifecycleMainService.onWillShutdown(e => {
+			e.join('lucosDaemon', lucosDaemonService.shutdownOwnedDaemon());
+		}));
 
 		// Utility Process Worker
 		const utilityProcessWorkerChannel = ProxyChannel.fromService(accessor.get(IUtilityProcessWorkerMainService), disposables);

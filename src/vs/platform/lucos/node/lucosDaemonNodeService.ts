@@ -3,15 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
-import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
+import { INativeEnvironmentService } from '../../environment/common/environment.js';
+import { ILogService } from '../../log/common/log.js';
+import { IProductService } from '../../product/common/productService.js';
 import { ILucosDaemonNodeService } from '../common/lucosDaemonNode.js';
 import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../common/lucosProtocol.js';
-import { ILucosDaemonEndpoint, LucosGrpcClient } from './lucosGrpcClient.js';
+import { LucosGrpcClient } from './lucosGrpcClient.js';
+import { resolveLucosDaemonBinaryPath } from './lucosDaemonPath.js';
+import { LucosDaemonProcessManager } from './lucosDaemonProcessManager.js';
 
 type GrpcReadableStream<T> = import('@grpc/grpc-js').ClientReadableStream<T>;
 
@@ -35,19 +37,50 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 
 	private readonly client = this._register(new LucosGrpcClient());
 	private readonly tasks = new Map<string, ITaskEntry>();
+	private readonly processManager: LucosDaemonProcessManager;
 
 	private connectionState = LucosConnectionState.Disconnected;
 	private authStatus: ILucosAuthStatus = { state: LucosAuthState.Unauthenticated, cloudReachable: false };
+	private ensurePromise: Promise<void> | undefined;
 
-	constructor() {
+	constructor(
+		@ILogService private readonly logService: ILogService,
+		@INativeEnvironmentService private readonly environmentService: INativeEnvironmentService,
+		@IProductService private readonly productService: IProductService,
+	) {
 		super();
-		this.tryConnect();
+		this.processManager = this._register(new LucosDaemonProcessManager(this.logService, {
+			resolveBinary: () => resolveLucosDaemonBinaryPath({
+				appRoot: this.environmentService.appRoot,
+				isBuilt: this.environmentService.isBuilt,
+			}),
+			gatewayUrl: this.productService.lucosGatewayUrl,
+			isHealthy: async endpoint => {
+				try {
+					await this.client.connect(endpoint);
+					const health = await this.client.health();
+					return !!health.serving;
+				} catch {
+					return false;
+				}
+			},
+		}));
+
+		this.ensurePromise = this.ensureThenConnect();
 		const timer = setInterval(() => void this.refreshHealth(), HEALTH_POLL_MS);
 		this._register(toDisposable(() => clearInterval(timer)));
 		this._register(toDisposable(() => this.tasks.forEach(t => { t.stream?.cancel(); t.emitter.dispose(); })));
 	}
 
+	async shutdownOwnedDaemon(): Promise<void> {
+		await this.processManager.stopOwnedDaemon();
+		this.setConnectionState(LucosConnectionState.Disconnected);
+	}
+
 	async getConnectionState(): Promise<LucosConnectionState> {
+		if (this.ensurePromise) {
+			await this.ensurePromise;
+		}
 		return this.connectionState;
 	}
 
@@ -190,19 +223,62 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		}
 	}
 
+	private async ensureThenConnect(): Promise<void> {
+		this.setConnectionState(LucosConnectionState.Connecting);
+		try {
+			const endpoint = await this.processManager.ensureRunning();
+			if (!endpoint) {
+				this.setConnectionState(LucosConnectionState.Disconnected);
+				return;
+			}
+			await this.client.connect(endpoint);
+			// Probe health directly — do not call refreshHealth() here (it awaits
+			// ensurePromise and would deadlock on the in-flight ensureThenConnect).
+			const response = await this.client.health();
+			this.setConnectionState(response.serving ? LucosConnectionState.Connected : LucosConnectionState.Disconnected);
+			this.logService.info(`[lucosDaemon] Connected to ${endpoint.address} (serving=${!!response.serving})`);
+		} catch (error) {
+			this.logService.error('[lucosDaemon] Failed to ensure/connect daemon', error);
+			this.setConnectionState(LucosConnectionState.Disconnected);
+		}
+	}
+
 	private tryConnect(): void {
-		const endpoint = readDaemonEndpoint();
+		const endpoint = this.processManager.readEndpoint();
 		if (!endpoint) {
 			this.setConnectionState(LucosConnectionState.Disconnected);
 			return;
 		}
-		void this.client.connect(endpoint).then(() => this.refreshHealth()).catch(() => {
+		void this.client.connect(endpoint).then(async () => {
+			try {
+				const response = await this.client.health();
+				this.setConnectionState(response.serving ? LucosConnectionState.Connected : LucosConnectionState.Disconnected);
+			} catch {
+				this.setConnectionState(LucosConnectionState.Disconnected);
+			}
+		}).catch(() => {
 			this.setConnectionState(LucosConnectionState.Disconnected);
 		});
 	}
 
 	private async refreshHealth(): Promise<void> {
+		// Wait for the in-flight startup ensure to finish without re-entering it.
+		const pendingEnsure = this.ensurePromise;
+		if (pendingEnsure) {
+			await pendingEnsure;
+			if (this.ensurePromise === pendingEnsure) {
+				this.ensurePromise = undefined;
+			}
+		}
+
 		if (!this.client.isConnected) {
+			// When disconnected, prefer a full ensure (may spawn) over raw reconnect.
+			if (!this.processManager.ownsDaemon) {
+				this.ensurePromise = this.ensureThenConnect();
+				await this.ensurePromise;
+				this.ensurePromise = undefined;
+				return;
+			}
 			this.tryConnect();
 			return;
 		}
@@ -226,28 +302,6 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 	private setAuthStatus(status: ILucosAuthStatus): void {
 		this.authStatus = status;
 		this._onDidChangeAuthStatus.fire(status);
-	}
-}
-
-function readDaemonEndpoint(): ILucosDaemonEndpoint | undefined {
-	try {
-		const raw = readFileSync(join(homedir(), '.lucos', 'daemon.json'), 'utf8');
-		// Daemon writes `local_session_token` (see local-daemon daemoninfo.File); keep legacy aliases.
-		const json = JSON.parse(raw) as {
-			port?: number;
-			grpc_port?: number;
-			token?: string;
-			session_token?: string;
-			local_session_token?: string;
-		};
-		const port = json.grpc_port ?? json.port;
-		const token = json.local_session_token ?? json.session_token ?? json.token;
-		if (!port || !token) {
-			return undefined;
-		}
-		return { address: `127.0.0.1:${port}`, token };
-	} catch {
-		return undefined;
 	}
 }
 
