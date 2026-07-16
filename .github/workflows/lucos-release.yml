@@ -782,14 +782,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
 
-      - name: Build .deb package
-        if: github.event_name == 'push'
-        run: |
-          npm run gulp lucos-linux-x64-prepare-deb
-          npm run gulp lucos-linux-x64-build-deb
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Locate AppImage artifact
         run: |
           APPIMAGE_PATH=$(ls .build/linux/appimage/Lucos-*-linux-x64.AppImage 2>/dev/null | head -1)
@@ -804,6 +796,14 @@ jobs:
             ${{ env.APPIMAGE_PATH }}.asc
           if-no-files-found: error
           retention-days: 30
+
+      - name: Build .deb package
+        if: github.event_name == 'push'
+        run: |
+          npm run gulp lucos-linux-x64-prepare-deb
+          npm run gulp lucos-linux-x64-build-deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Linux x64 .deb artifact
         if: github.event_name == 'push'
