@@ -28,8 +28,8 @@
 	"win32AppUserModelId": "Lucos.IDE",
 	"win32ShellNameShort": "&Lucos",
 	"win32ContextMenu": {
-		"x64": { "clsid": "{3D25D759-6B2F-4867-A263-788A11154DB0}" },
-		"arm64": { "clsid": "{F778DFAD-8C9C-4D0A-B6D3-FC02DCAACC7C}" }
+		"x64": { "clsid": "3D25D759-6B2F-4867-A263-788A11154DB0" },
+		"arm64": { "clsid": "F778DFAD-8C9C-4D0A-B6D3-FC02DCAACC7C" }
 	},
 	"win32TunnelServiceMutex": "lucos-tunnelservice",
 	"win32TunnelMutex": "lucos-tunnel",
