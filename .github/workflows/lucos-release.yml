@@ -664,13 +664,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Windows system-setup installer
-        # Pass --sign-lucos when the PFX secret is available (tag builds).
-        # The sign-lucos.ts script reads WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD.
+        # Pass --sign-lucos only when the PFX secret is set. An empty flag after
+        # `--` becomes a blank gulp task name ("Task never defined: ").
         shell: pwsh
         run: |
-          $signFlag = ''
-          if ($env:WINDOWS_PFX_DATA -ne '') { $signFlag = '--sign-lucos' }
-          npm run gulp lucos-win32-x64-system-setup -- $signFlag
+          if ($env:WINDOWS_PFX_DATA -ne '') {
+            npm run gulp lucos-win32-x64-system-setup -- --sign-lucos
+          } else {
+            npm run gulp lucos-win32-x64-system-setup
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
