@@ -29,7 +29,7 @@ import { LucosAuthService } from './lucosAuthService.js';
 import { LucosIndexService } from './lucosIndexService.js';
 import { LucosChatViewPane } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
-import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosResetAuthAction, LucosGoogleLoginAction, LucosSignInTitleBarAction, LucosSignOutContextContribution } from './lucosLoginActions.js';
+import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosResetAuthAction, LucosGoogleLoginAction } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
 import { LucosShowStatusAction } from './lucosStatusActions.js';
 import { LucosNotificationsContribution } from './lucosNotifications.js';
@@ -41,6 +41,7 @@ import { LucosWorkspaceIndexWatcher } from './lucosWorkspaceIndexWatcher.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 import { LucosAuthModeService } from './lucosAuthModeService.js';
 import { LucosAuthCallbackHandler } from './lucosAuthCallbackHandler.js';
+import { LucosAccountSettingsContribution } from './lucosAccountSettings.js';
 
 //#region Services
 // The daemon service is bound per-platform: desktop -> real gRPC client
@@ -64,6 +65,14 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	title: localize('lucos.configuration.title', "Lucos AI"),
 	type: 'object',
 	properties: {
+		[LucosSettingId.AccountInfo]: {
+			type: 'string',
+			default: '',
+			scope: ConfigurationScope.MACHINE,
+			markdownDescription: localize('lucos.account.info', "**Account Information:** Not signed in. Use the Lucos: Sign In command to authenticate."),
+			tags: ['lucos'],
+			order: 0,
+		},
 		[LucosSettingId.AgentUrl]: {
 			type: 'string',
 			default: '',
@@ -186,10 +195,8 @@ registerAction2(LucosLoginAction);
 registerAction2(LucosLogoutAction);
 registerAction2(LucosResetAuthAction);
 registerAction2(LucosGoogleLoginAction);
-registerAction2(LucosSignInTitleBarAction);
 registerWorkbenchContribution2(LucosAuthRestoreContribution.ID, LucosAuthRestoreContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(LucosAuthCallbackHandler.ID, LucosAuthCallbackHandler, WorkbenchPhase.AfterRestored);
-registerWorkbenchContribution2(LucosSignOutContextContribution.ID, LucosSignOutContextContribution, WorkbenchPhase.AfterRestored);
 //#endregion
 
 //#region Sign-in on startup (Cursor-like full-window overlay)
@@ -200,6 +207,10 @@ registerWorkbenchContribution2(LucosSignInOverlayContribution.ID, LucosSignInOve
 
 //#region Workspace-open -> auto-index (TW-178 / TW-220)
 registerWorkbenchContribution2(LucosWorkspaceIndexWatcher.ID, LucosWorkspaceIndexWatcher, WorkbenchPhase.AfterRestored);
+//#endregion
+
+//#region Account settings display (dynamic user info in settings page)
+registerWorkbenchContribution2(LucosAccountSettingsContribution.ID, LucosAccountSettingsContribution, WorkbenchPhase.AfterRestored);
 //#endregion
 
 //#region Editor & palette actions (TW-163 Cmd+K, TW-167)

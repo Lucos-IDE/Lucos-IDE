@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 export const LucosSettingId = {
+	/** Displays signed-in user account information (read-only). */
+	AccountInfo: 'lucos.account.info',
 	/** Manual override for the daemon gRPC address; empty -> auto-discover from `~/.lucos/daemon.json`. */
 	AgentUrl: 'lucos.agent.url',
 	/** Default model for chat/edits; the available set is ultimately gated by the user's plan. */
@@ -31,6 +33,7 @@ export type LucosSettingId = typeof LucosSettingId[keyof typeof LucosSettingId];
 
 /** Strongly-typed view of the Lucos settings, for consumers reading via IConfigurationService. */
 export interface ILucosConfiguration {
+	readonly accountInfo: string;
 	readonly agentUrl: string;
 	readonly agentModel: string;
 	readonly agentPermissionMode: 'auto' | 'manual';

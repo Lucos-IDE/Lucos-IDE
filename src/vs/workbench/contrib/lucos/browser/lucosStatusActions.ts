@@ -76,8 +76,8 @@ export class LucosShowStatusAction extends Action2 {
 
 		const separator: IQuickPickSeparator = { type: 'separator', label: localize('lucos.showStatus.actions', "Actions") };
 		const actions: IStatusPickItem[] = [
-			{ id: 'reindex', label: localize('lucos.showStatus.reindex', "$(sync) Re-index Workspace") },
-			{ id: 'settings', label: localize('lucos.showStatus.settings', "$(gear) Open Lucos Settings") },
+			{ id: 'reindex', label: '$(sync) ' + localize('lucos.showStatus.reindex', "Re-index Workspace") },
+			{ id: 'settings', label: '$(gear) ' + localize('lucos.showStatus.settings', "Open Lucos Settings") },
 		];
 
 		const pick = await quickInputService.pick<IStatusPickItem>([...rows, separator, ...actions], {
@@ -96,16 +96,45 @@ export class LucosShowStatusAction extends Action2 {
 function buildStatusRows(index: ILucosIndexStatus, connection: LucosConnectionState, auth: ILucosAuthStatus, model: string, version: string): IStatusPickItem[] {
 	const connected = connection === LucosConnectionState.Connected;
 	return [
-		{ label: localize('lucos.showStatus.index', "$(database) Index"), description: describeIndex(index) },
+		{ label: '$(database) ' + localize('lucos.showStatus.index', "Index"), description: describeIndex(index) },
 		{
-			label: localize('lucos.showStatus.daemon', "$(plug) Daemon"),
+			label: '$(plug) ' + localize('lucos.showStatus.daemon', "Daemon"),
 			description: connected
 				? (version ? localize('lucos.showStatus.daemonConnectedVersion', "Connected · {0}", version) : localize('lucos.showStatus.daemonConnected', "Connected"))
 				: localize('lucos.showStatus.daemonOffline', "Offline"),
 		},
-		{ label: localize('lucos.showStatus.account', "$(account) Account"), description: describeAuth(auth) },
-		{ label: localize('lucos.showStatus.model', "$(sparkle) Model"), description: model || '—' },
+		buildAccountRow(auth),
+		{ label: '$(sparkle) ' + localize('lucos.showStatus.model', "Model"), description: model || '—' },
 	];
+}
+
+function buildAccountRow(auth: ILucosAuthStatus): IStatusPickItem {
+	const details: string[] = [];
+
+	if (auth.state === LucosAuthState.Authenticated) {
+		if (auth.orgId) {
+			details.push(localize('lucos.showStatus.accountOrg', "Org: {0}", auth.orgId));
+		}
+		if (auth.planCode) {
+			details.push(localize('lucos.showStatus.accountPlan', "Plan: {0}", auth.planCode));
+		}
+		if (auth.roles && auth.roles.length > 0) {
+			details.push(localize('lucos.showStatus.accountRoles', "Roles: {0}", auth.roles.join(', ')));
+		}
+		if (typeof auth.tokenExpiresAt === 'number') {
+			details.push(localize('lucos.showStatus.accountTokenExpiresAt', "Token Expires: {0}", formatTimestamp(auth.tokenExpiresAt)));
+		}
+	}
+
+	if (!auth.cloudReachable) {
+		details.push(localize('lucos.showStatus.accountCloudUnreachable', "Cloud Unreachable"));
+	}
+
+	return {
+		label: '$(account) ' + localize('lucos.showStatus.account', "Account"),
+		description: describeAuth(auth),
+		detail: details.length > 0 ? details.join(' · ') : undefined,
+	};
 }
 
 function describeIndex(index: ILucosIndexStatus): string {
@@ -130,4 +159,13 @@ function describeAuth(auth: ILucosAuthStatus): string {
 			: localize('lucos.showStatus.signedIn', "Signed in");
 	}
 	return localize('lucos.showStatus.signedOut', "Signed out");
+}
+
+function formatTimestamp(timestamp: number): string {
+	const date = new Date(timestamp);
+	if (isNaN(date.getTime())) {
+		return localize('lucos.showStatus.unknownTimestamp', "unknown");
+	}
+
+	return date.toLocaleString();
 }
