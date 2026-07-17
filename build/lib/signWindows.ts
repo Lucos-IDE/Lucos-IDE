@@ -118,26 +118,61 @@ async function ensureKeyLockerCertificate(): Promise<string> {
 			if (!process.env['SM_HOST']) {
 				process.env['SM_HOST'] = 'https://clientauth.one.digicert.com';
 			}
-			const alias = requireEnv('SM_KEYPAIR_ALIAS');
+			// Aliases are case-sensitive; trim accidental secret whitespace.
+			const alias = requireEnv('SM_KEYPAIR_ALIAS').trim();
+			process.env['SM_KEYPAIR_ALIAS'] = alias;
 
 			console.log('[sign-windows] Registering DigiCert KSP…');
-			try {
-				await spawnInherit('smctl', ['windows', 'ksp', 'register']);
-			} catch (err) {
-				// Already registered is fine; continue and let signing fail loudly if broken.
-				console.warn(`[sign-windows] KSP register warning: ${err instanceof Error ? err.message : err}`);
+			const ksp = await spawnCapture('smctl', ['windows', 'ksp', 'register']);
+			const kspOut = `${ksp.stdout}\n${ksp.stderr}`;
+			if (ksp.code !== 0) {
+				// 0xc0000035 = STATUS_OBJECT_NAME_COLLISION → provider already registered.
+				if (/0xc0000035/i.test(kspOut) || /already/i.test(kspOut)) {
+					console.log('[sign-windows] DigiCert KSP already registered (ok).');
+				} else {
+					console.warn(`[sign-windows] KSP register warning (exit ${ksp.code}): ${kspOut.trim()}`);
+				}
+			}
+
+			console.log('[sign-windows] Listing keypairs visible to this DigiCert identity…');
+			const listed = await spawnCapture('smctl', ['keypair', 'list']);
+			process.stdout.write(listed.stdout);
+			process.stderr.write(listed.stderr);
+			if (listed.code !== 0) {
+				throw new Error(
+					`[sign-windows] smctl keypair list failed (exit ${listed.code}). ` +
+					`Check SM_HOST / API key / client cert, and that this DigiCert user is the KeyLocker signer.`
+				);
+			}
+			const listText = `${listed.stdout}\n${listed.stderr}`;
+			if (!listText.includes(alias)) {
+				throw new Error(
+					`[sign-windows] Keypair alias "${alias}" is not visible to this DigiCert identity.\n` +
+					`DigiCert KeyLocker allows one designated signer — assign your CI service user as the ` +
+					`signer for this certificate in DigiCert ONE → KeyLocker → Certificates, then copy the ` +
+					`exact Alias from the Alias column (case-sensitive) into SM_KEYPAIR_ALIAS.\n` +
+					`smctl keypair list output is above.`
+				);
 			}
 
 			const outDir = process.env['RUNNER_TEMP'] || os.tmpdir();
 			const certName = 'lucos-codesign';
 			console.log(`[sign-windows] Downloading certificate for alias=${alias}…`);
-			await spawnInherit('smctl', [
-				'certificate',
-				'download',
-				`--keypair-alias=${alias}`,
-				`--name=${certName}`,
-				`--out=${outDir}`,
-			]);
+			try {
+				await spawnInherit('smctl', [
+					'certificate',
+					'download',
+					`--keypair-alias=${alias}`,
+					`--name=${certName}`,
+					`--out=${outDir}`,
+				]);
+			} catch (err) {
+				throw new Error(
+					`[sign-windows] certificate download failed for alias "${alias}": ` +
+					`${err instanceof Error ? err.message : err}\n` +
+					`Confirm the exact alias via DigiCert ONE → KeyLocker → Certificates → Alias column.`
+				);
+			}
 
 			const candidates = [
 				path.join(outDir, `${certName}.crt`),
