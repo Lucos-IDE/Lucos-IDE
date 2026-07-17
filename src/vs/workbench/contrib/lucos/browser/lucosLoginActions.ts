@@ -83,7 +83,7 @@ export class LucosGoogleLoginAction extends Action2 {
 	}
 }
 
-/** Resumes a stored session on startup by handing any keychain JWT to the daemon. */
+/** Resumes a stored session on startup; LucosAuthService also re-hands JWT on daemon reconnect. */
 export class LucosAuthRestoreContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.lucosAuthRestore';
 	constructor(

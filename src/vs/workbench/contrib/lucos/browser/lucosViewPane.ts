@@ -30,6 +30,7 @@ import { IViewDescriptorService } from '../../../common/views.js';
 import { ILucosMessage, ILucosSession, LucosMessageRole } from '../common/lucosConversation.js';
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosChatRequest, ILucosChatRequestService } from '../common/lucosChatRequestService.js';
+import { windowChatHistory } from '../common/lucosChatHistory.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 import { ILucosPatchProposal, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
@@ -493,6 +494,9 @@ export class LucosChatViewPane extends ViewPane {
 		ui.shownPatchIds.clear();
 		ui.pendingPatch = undefined;
 
+		// Snapshot prior turns before appending the new user/assistant messages.
+		const history = windowChatHistory(this.conversationService.activeSession.messages);
+
 		this.conversationService.addMessage(LucosMessageRole.User, goal);
 		const assistant = this.conversationService.addMessage(LucosMessageRole.Assistant, '', true);
 		ui.streamingAssistantId = assistant.id;
@@ -524,6 +528,7 @@ export class LucosChatViewPane extends ViewPane {
 			permissionMode,
 			context: { ...(contextOverride ?? this.buildContext()), workspaceRoot },
 			selectedAgentPath,
+			history,
 		};
 		if (!contextOverride) {
 			this.clearContext();

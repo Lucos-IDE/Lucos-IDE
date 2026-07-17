@@ -55,6 +55,11 @@ message SetCloudCredentialsResponse { AuthStatusResponse status = 1; }
 message ClearCloudCredentialsRequest {}
 message ClearCloudCredentialsResponse { AuthStatusResponse status = 1; }
 
+message ChatMessage {
+	string role = 1;
+	string content = 2;
+}
+
 message StartAgentTaskRequest {
 	string goal = 1;
 	string workspace_id = 2;
@@ -66,6 +71,7 @@ message StartAgentTaskRequest {
 	string session_id = 8;
 	string selected_agent_path = 9;
 	string workspace_root = 10;
+	repeated ChatMessage history = 11;
 }
 
 message TaskEvent {

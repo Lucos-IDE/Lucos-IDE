@@ -156,6 +156,7 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 			openBuffers: request.context?.openBuffers ?? [],
 			workspaceRoot: request.context?.workspaceRoot ?? '',
 			selectedAgentPath: request.selectedAgentPath ?? '',
+			history: request.history ?? [],
 		};
 		return { taskId: this.beginTask(() => this.client.startAgentTask(grpcRequest)) };
 	}
@@ -295,6 +296,10 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 	private setConnectionState(state: LucosConnectionState): void {
 		if (this.connectionState !== state) {
 			this.connectionState = state;
+			if (state === LucosConnectionState.Disconnected) {
+				// Daemon cloud JWT is memory-only; treat disconnect as unauthenticated until re-handoff.
+				this.setAuthStatus({ state: LucosAuthState.Unauthenticated, cloudReachable: false });
+			}
 			this._onDidChangeConnectionState.fire(state);
 		}
 	}

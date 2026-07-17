@@ -61,6 +61,6 @@ export interface ILucosAuthService {
 	 */
 	register(email: string, password: string, name?: string): Promise<void>;
 
-	/** On startup: if a JWT is in the keychain, hand it to the daemon so the session resumes. */
+	/** On startup (and on daemon reconnect): if a JWT is in the keychain, hand it to the daemon. */
 	restore(): Promise<void>;
 }

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Action } from '../../../../base/common/actions.js';
+import { decodeBase64 } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
@@ -17,6 +18,7 @@ import { IProductService } from '../../../../platform/product/common/productServ
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { asJson, IRequestService, isSuccess } from '../../../../platform/request/common/request.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
+import { LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
 import { LucosSettingId } from '../common/lucosConfiguration.js';
 import { ILucosAuthService, ILucosSignedInUser } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
@@ -43,6 +45,21 @@ interface IIdeStartResponse {
 	readonly redirectUrl?: string;
 }
 
+/** Reads JWT `exp` (seconds) as epoch milliseconds. Unverified — daemon validates via /auth/me. */
+function readJwtExpiryMs(token: string): number | undefined {
+	try {
+		const parts = token.split('.');
+		if (parts.length < 2 || !parts[1]) {
+			return undefined;
+		}
+		const json = decodeBase64(parts[1]).toString();
+		const payload = JSON.parse(json) as { exp?: unknown };
+		return typeof payload.exp === 'number' ? payload.exp * 1000 : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export class LucosAuthService extends Disposable implements ILucosAuthService {
 
 	declare readonly _serviceBrand: undefined;
@@ -62,6 +79,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	private _pendingGoogleResolve: ((success: boolean) => void) | undefined;
 	private _pendingGoogleNotification: INotificationHandle | undefined;
 	private _pendingGoogleTimeout: ReturnType<typeof setTimeout> | undefined;
+	private _syncInFlight: Promise<void> | undefined;
 
 	constructor(
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
@@ -76,6 +94,14 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	) {
 		super();
 		this.restorePromise = new Promise<void>(resolve => { this._resolveRestorePromise = resolve; });
+
+		// Daemon keeps cloud JWT in memory only. Re-hand keychain credentials whenever it
+		// (re)connects so restart/reconnect does not leave IDE signed-in and daemon unauthenticated.
+		this._register(this.lucosDaemonService.onDidChangeConnectionState(state => {
+			if (state === LucosConnectionState.Connected) {
+				void this.syncCredentialsToDaemon();
+			}
+		}));
 	}
 
 	/** Updates the in-memory signed-in state and fires the change event. */
@@ -112,17 +138,12 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 				await this.secretStorageService.set(USER_ID_KEY, auth.userId);
 			}
 			await this.secretStorageService.set(USER_EMAIL_KEY, email);
-			try {
-				await this.lucosDaemonService.setCloudCredentials({
-					accessToken: auth.token,
-					userId: auth.userId,
-					orgId: auth.orgId,
-				});
-			} catch (daemonError) {
-				this.logService.warn('[LucosAuth] login: daemon unavailable, credentials stored locally only',
-					daemonError instanceof Error ? daemonError.message : String(daemonError));
-			}
 			this._setSignedIn(true, { userId: auth.userId, email });
+			await this.handCredentialsToDaemon({
+				accessToken: auth.token,
+				userId: auth.userId,
+				orgId: auth.orgId,
+			});
 			this.notificationService.notify({ severity: Severity.Info, message: localize('lucos.login.success', "Signed in to Lucos.") });
 			return true;
 		} catch (error) {
@@ -268,17 +289,9 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			}
 			this.logService.info('[LucosAuth] completeGoogleLogin: tokens stored in keychain');
 
-			// Hand credentials to the daemon if it is available; failure is non-fatal
-			// because the tokens are already persisted in the OS keychain.
-			try {
-				await this.lucosDaemonService.setCloudCredentials({ accessToken: token, userId });
-				this.logService.info('[LucosAuth] completeGoogleLogin: credentials handed to daemon');
-			} catch (daemonError) {
-				this.logService.warn('[LucosAuth] completeGoogleLogin: daemon unavailable, credentials stored locally only',
-					daemonError instanceof Error ? daemonError.message : String(daemonError));
-			}
-
 			this._setSignedIn(true, { userId, email });
+			// Hand credentials to the daemon if available; failure is non-fatal — tokens are in keychain.
+			await this.handCredentialsToDaemon({ accessToken: token, userId });
 			this.notificationService.notify({ severity: Severity.Info, message: localize('lucos.loginGoogle.success', "Signed in to Lucos with Google.") });
 			this._cancelPendingGoogle(true);
 		} catch (error) {
@@ -322,16 +335,64 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 				userId: userId ?? undefined,
 				email: email ?? undefined,
 			});
-			try {
-				await this.lucosDaemonService.setCloudCredentials({ accessToken: token, userId: userId ?? undefined });
-			} catch {
-				// Daemon may be offline at startup - the status bar reflects the disconnected state,
-				// and restore is retried on next login. Swallow so startup never fails on auth.
-			}
+			// Hand off now if daemon is up; Connected listener re-tries after reconnect.
+			await this.syncCredentialsToDaemon();
 		} finally {
 			// Always resolve so anything awaiting restorePromise unblocks regardless of outcome.
 			this._resolveRestorePromise?.();
 			this._resolveRestorePromise = undefined;
+		}
+	}
+
+	/**
+	 * Reads the keychain JWT and pushes it to the daemon. Used on restore and whenever the
+	 * daemon (re)connects. Single-flight so overlapping Connected + restore calls share one RPC.
+	 */
+	private syncCredentialsToDaemon(): Promise<void> {
+		if (!this._syncInFlight) {
+			this._syncInFlight = this.doSyncCredentialsToDaemon().finally(() => {
+				this._syncInFlight = undefined;
+			});
+		}
+		return this._syncInFlight;
+	}
+
+	private async doSyncCredentialsToDaemon(): Promise<void> {
+		const token = await this.secretStorageService.get(JWT_SECRET_KEY);
+		if (!token) {
+			return;
+		}
+		const userId = await this.secretStorageService.get(USER_ID_KEY);
+		const email = await this.secretStorageService.get(USER_EMAIL_KEY);
+		if (!this._isSignedIn) {
+			this._setSignedIn(true, {
+				userId: userId ?? undefined,
+				email: email ?? undefined,
+			});
+		}
+		await this.handCredentialsToDaemon({
+			accessToken: token,
+			userId: userId ?? undefined,
+		});
+	}
+
+	/** SetCloudCredentials with JWT expiry; daemon-offline errors are non-fatal. */
+	private async handCredentialsToDaemon(credentials: {
+		accessToken: string;
+		userId?: string;
+		orgId?: string;
+	}): Promise<void> {
+		try {
+			await this.lucosDaemonService.setCloudCredentials({
+				accessToken: credentials.accessToken,
+				userId: credentials.userId,
+				orgId: credentials.orgId,
+				expiresAt: readJwtExpiryMs(credentials.accessToken),
+			});
+			this.logService.info('[LucosAuth] credentials handed to daemon');
+		} catch (daemonError) {
+			this.logService.warn('[LucosAuth] daemon unavailable, credentials stored locally only',
+				daemonError instanceof Error ? daemonError.message : String(daemonError));
 		}
 	}
 

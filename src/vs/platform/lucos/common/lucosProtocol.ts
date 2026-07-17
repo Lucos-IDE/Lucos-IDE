@@ -65,6 +65,12 @@ export const enum LucosPermissionMode {
 	Manual = 'manual',
 }
 
+/** Prior turn in a multi-turn chat — maps to proto `ChatMessage`. */
+export interface ILucosChatMessage {
+	readonly role: string;
+	readonly content: string;
+}
+
 /** Request to start an autonomous agent task — `StartAgentTask` RPC. */
 export interface IStartAgentTaskRequest {
 	readonly goal: string;
@@ -74,6 +80,8 @@ export interface IStartAgentTaskRequest {
 	readonly context?: ILucosWorkspaceContext;
 	/** Path of a selected skill/agent customization to run with (TW-184). */
 	readonly selectedAgentPath?: string;
+	/** Prior conversation turns for multi-turn context (windowed by the IDE). */
+	readonly history?: readonly ILucosChatMessage[];
 }
 
 /**
