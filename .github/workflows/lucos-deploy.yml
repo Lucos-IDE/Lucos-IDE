@@ -570,7 +570,8 @@ jobs:
         if: needs.resolve-env.outputs.is_prod == 'true' && steps.digicert-prep.outputs.enabled == 'true'
         uses: digicert/code-signing-software-trust-action@v1
         with:
-          simple-signing-mode: true
+          # Need KSP + smctl for Authenticode via signtool (InnoSetup .e32.tmp / .exe).
+          simple-signing-mode: false
         env:
           SM_HOST: ${{ env.SM_HOST }}
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
