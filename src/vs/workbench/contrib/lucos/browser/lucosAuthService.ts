@@ -16,11 +16,11 @@ import { INotificationHandle, INotificationService, Severity } from '../../../..
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
-import { asJson, IRequestService, isSuccess } from '../../../../platform/request/common/request.js';
+import { asJson, asText, IRequestService, isSuccess } from '../../../../platform/request/common/request.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
 import { LucosSettingId } from '../common/lucosConfiguration.js';
-import { ILucosAuthService, ILucosSignedInUser } from '../common/lucosAuthService.js';
+import { ILucosAuthService, ILucosPendingVerification, ILucosSignedInUser } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 
 /** Keychain key for the cloud access JWT. */
@@ -33,11 +33,16 @@ const USER_ID_KEY = 'lucos.cloud.userId';
 const USER_EMAIL_KEY = 'lucos.cloud.email';
 
 interface IAuthResponse {
+	readonly success?: boolean;
 	readonly token?: string;
 	readonly accessToken?: string;
+	readonly refreshToken?: string;
 	readonly userId?: string;
 	readonly orgId?: string;
-	readonly user?: { readonly id?: string; readonly orgId?: string };
+	readonly user?: { readonly id?: string; readonly orgId?: string; readonly email?: string };
+	readonly pendingVerification?: boolean;
+	readonly email?: string;
+	readonly message?: string;
 }
 
 interface IIdeStartResponse {
@@ -132,16 +137,11 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		}
 
 		try {
-			const auth = await this.authenticate(email, password);
-			await this.secretStorageService.set(JWT_SECRET_KEY, auth.token);
-			if (auth.userId) {
-				await this.secretStorageService.set(USER_ID_KEY, auth.userId);
-			}
-			await this.secretStorageService.set(USER_EMAIL_KEY, email);
-			this._setSignedIn(true, { userId: auth.userId, email });
-			await this.handCredentialsToDaemon({
-				accessToken: auth.token,
+			const auth = await this.authenticate(email, password, 'sign-in');
+			await this.persistSession(auth.token, {
+				refreshToken: auth.refreshToken,
 				userId: auth.userId,
+				email,
 				orgId: auth.orgId,
 			});
 			this.notificationService.notify({ severity: Severity.Info, message: localize('lucos.login.success', "Signed in to Lucos.") });
@@ -160,29 +160,108 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	async loginWithEmail(email: string, password: string): Promise<void> {
 		this.logService.info('[LucosAuth] loginWithEmail', `email=${email}`);
 		const auth = await this.authenticate(email, password, 'sign-in');
-		await this.secretStorageService.set(JWT_SECRET_KEY, auth.token);
-		if (auth.userId) { await this.secretStorageService.set(USER_ID_KEY, auth.userId); }
-		await this.secretStorageService.set(USER_EMAIL_KEY, email);
-		try {
-			await this.lucosDaemonService.setCloudCredentials({ accessToken: auth.token, userId: auth.userId, orgId: auth.orgId });
-		} catch (e) {
-			this.logService.warn('[LucosAuth] loginWithEmail: daemon unavailable', e instanceof Error ? e.message : String(e));
-		}
-		this._setSignedIn(true, { userId: auth.userId, email });
+		await this.persistSession(auth.token, {
+			refreshToken: auth.refreshToken,
+			userId: auth.userId,
+			email,
+			orgId: auth.orgId,
+		});
 	}
 
-	async register(email: string, password: string, name?: string): Promise<void> {
+	async register(email: string, password: string, name?: string): Promise<ILucosPendingVerification> {
 		this.logService.info('[LucosAuth] register', `email=${email}`);
-		const auth = await this.authenticate(email, password, 'sign-up', name ? { name } : undefined);
-		await this.secretStorageService.set(JWT_SECRET_KEY, auth.token);
-		if (auth.userId) { await this.secretStorageService.set(USER_ID_KEY, auth.userId); }
-		await this.secretStorageService.set(USER_EMAIL_KEY, email);
-		try {
-			await this.lucosDaemonService.setCloudCredentials({ accessToken: auth.token, userId: auth.userId, orgId: auth.orgId });
-		} catch (e) {
-			this.logService.warn('[LucosAuth] register: daemon unavailable', e instanceof Error ? e.message : String(e));
+		const gatewayUrl = this.gatewayUrl();
+		const context = await this.requestService.request({
+			type: 'POST',
+			url: `${gatewayUrl}/api/v1/auth/authenticate?from=desktop`,
+			headers: { 'Content-Type': 'application/json' },
+			data: JSON.stringify({
+				authType: 'email',
+				action: 'sign-up',
+				email,
+				password,
+				...(name ? { name } : {}),
+			}),
+			callSite: 'lucos.register',
+		}, CancellationToken.None);
+
+		if (!isSuccess(context)) {
+			throw new Error(await this.readGatewayError(context, localize('lucos.login.badStatus', "gateway responded {0}", context.res.statusCode ?? 0)));
 		}
-		this._setSignedIn(true, { userId: auth.userId, email });
+
+		const body = await asJson<IAuthResponse>(context);
+		// Gateway sign-up is OTP-gated: JWT is issued only after /auth/verify-email.
+		if (body?.pendingVerification) {
+			return {
+				pendingVerification: true,
+				email: body.email ?? email,
+				message: body.message,
+			};
+		}
+
+		// Backward-compatible: some environments may still return a token immediately.
+		const token = body?.token ?? body?.accessToken;
+		if (token) {
+			await this.persistSession(token, {
+				refreshToken: body?.refreshToken,
+				userId: body?.userId ?? body?.user?.id,
+				email: body?.email ?? body?.user?.email ?? email,
+				orgId: body?.orgId ?? body?.user?.orgId,
+			});
+			// Caller treats absence of a pending step via isSignedIn; still satisfy the return type.
+			return {
+				pendingVerification: true,
+				email,
+				message: localize('lucos.register.alreadyVerified', "Account created."),
+			};
+		}
+
+		throw new Error(body?.message
+			?? localize('lucos.register.noPending', "Sign-up did not start email verification. Check the gateway response."));
+	}
+
+	async verifySignupEmail(email: string, otp: string): Promise<void> {
+		this.logService.info('[LucosAuth] verifySignupEmail', `email=${email}`);
+		const gatewayUrl = this.gatewayUrl();
+		const context = await this.requestService.request({
+			type: 'POST',
+			url: `${gatewayUrl}/api/v1/auth/verify-email`,
+			headers: { 'Content-Type': 'application/json' },
+			data: JSON.stringify({ email, otp }),
+			callSite: 'lucos.verifyEmail',
+		}, CancellationToken.None);
+
+		if (!isSuccess(context)) {
+			throw new Error(await this.readGatewayError(context, localize('lucos.verifyEmail.badStatus', "gateway responded {0}", context.res.statusCode ?? 0)));
+		}
+
+		const body = await asJson<IAuthResponse>(context);
+		const token = body?.token ?? body?.accessToken;
+		if (!token) {
+			throw new Error(localize('lucos.login.noToken', "no token in gateway response"));
+		}
+		await this.persistSession(token, {
+			refreshToken: body?.refreshToken,
+			userId: body?.userId ?? body?.user?.id,
+			email: body?.user?.email ?? email,
+			orgId: body?.orgId ?? body?.user?.orgId,
+		});
+	}
+
+	async resendSignupOtp(email: string): Promise<void> {
+		this.logService.info('[LucosAuth] resendSignupOtp', `email=${email}`);
+		const gatewayUrl = this.gatewayUrl();
+		const context = await this.requestService.request({
+			type: 'POST',
+			url: `${gatewayUrl}/api/v1/auth/resend-otp`,
+			headers: { 'Content-Type': 'application/json' },
+			data: JSON.stringify({ email }),
+			callSite: 'lucos.resendOtp',
+		}, CancellationToken.None);
+
+		if (!isSuccess(context)) {
+			throw new Error(await this.readGatewayError(context, localize('lucos.resendOtp.badStatus', "gateway responded {0}", context.res.statusCode ?? 0)));
+		}
 	}
 
 	async loginWithGoogle(): Promise<boolean> {
@@ -396,12 +475,59 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		}
 	}
 
-	private async authenticate(email: string, password: string, action: 'sign-in' | 'sign-up' = 'sign-in', extras?: Record<string, string>): Promise<{ token: string; userId?: string; orgId?: string }> {
+	private gatewayUrl(): string {
 		const gatewayUrl = ((this.configurationService.getValue<string>(LucosSettingId.CloudGatewayUrl) ?? '').trim()
 			|| (this.productService.lucosGatewayUrl ?? '')).replace(/\/+$/, '');
 		if (!gatewayUrl) {
 			throw new Error(localize('lucos.login.noGateway', "Set `lucos.cloud.gatewayUrl` in settings first."));
 		}
+		return gatewayUrl;
+	}
+
+	private async readGatewayError(context: Awaited<ReturnType<IRequestService['request']>>, fallback: string): Promise<string> {
+		// asJson() rejects non-2xx responses, so read the body as text for error payloads.
+		try {
+			const text = await asText(context);
+			if (text) {
+				const errBody = JSON.parse(text) as { message?: string; error?: string };
+				if (errBody?.message) {
+					return errBody.message;
+				}
+				if (errBody?.error) {
+					return errBody.error;
+				}
+			}
+		} catch { /* ignore body parse errors */ }
+		return fallback;
+	}
+
+	/** Persist JWT (+ optional refresh) to keychain, update signed-in state, hand off to daemon. */
+	private async persistSession(token: string, opts: {
+		refreshToken?: string;
+		userId?: string;
+		email?: string;
+		orgId?: string;
+	}): Promise<void> {
+		await this.secretStorageService.set(JWT_SECRET_KEY, token);
+		if (opts.refreshToken) {
+			await this.secretStorageService.set(REFRESH_TOKEN_KEY, opts.refreshToken);
+		}
+		if (opts.userId) {
+			await this.secretStorageService.set(USER_ID_KEY, opts.userId);
+		}
+		if (opts.email) {
+			await this.secretStorageService.set(USER_EMAIL_KEY, opts.email);
+		}
+		this._setSignedIn(true, { userId: opts.userId, email: opts.email });
+		await this.handCredentialsToDaemon({
+			accessToken: token,
+			userId: opts.userId,
+			orgId: opts.orgId,
+		});
+	}
+
+	private async authenticate(email: string, password: string, action: 'sign-in' | 'sign-up' = 'sign-in', extras?: Record<string, string>): Promise<{ token: string; refreshToken?: string; userId?: string; orgId?: string }> {
+		const gatewayUrl = this.gatewayUrl();
 
 		const context = await this.requestService.request({
 			type: 'POST',
@@ -414,22 +540,23 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		}, CancellationToken.None);
 
 		if (!isSuccess(context)) {
-			let errMsg = localize('lucos.login.badStatus', "gateway responded {0}", context.res.statusCode ?? 0);
-			try {
-				const errBody = await asJson<{ message?: string; error?: string }>(context);
-				if (errBody?.message) { errMsg = errBody.message; }
-				else if (errBody?.error) { errMsg = errBody.error; }
-			} catch { /* ignore body parse errors */ }
-			throw new Error(errMsg);
+			throw new Error(await this.readGatewayError(context, localize('lucos.login.badStatus', "gateway responded {0}", context.res.statusCode ?? 0)));
 		}
 
 		const body = await asJson<IAuthResponse>(context);
+		if (body?.pendingVerification) {
+			throw new Error(body.message
+				?? localize('lucos.login.pendingVerification', "Email verification required before sign-in."));
+		}
 		const token = body?.token ?? body?.accessToken;
 		if (!token) {
+			this.logService.warn('[LucosAuth] authenticate: success response missing token',
+				`keys=${body ? Object.keys(body).join(',') : '(null)'}`);
 			throw new Error(localize('lucos.login.noToken', "no token in gateway response"));
 		}
 		return {
 			token,
+			refreshToken: body?.refreshToken,
 			userId: body?.userId ?? body?.user?.id,
 			orgId: body?.orgId ?? body?.user?.orgId,
 		};

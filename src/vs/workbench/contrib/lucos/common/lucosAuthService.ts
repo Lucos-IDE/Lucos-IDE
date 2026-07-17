@@ -13,6 +13,13 @@ export interface ILucosSignedInUser {
 	readonly email?: string;
 }
 
+/** Result of email sign-up: gateway sends an OTP and does not issue a JWT yet. */
+export interface ILucosPendingVerification {
+	readonly pendingVerification: true;
+	readonly email: string;
+	readonly message?: string;
+}
+
 export interface ILucosAuthService {
 	readonly _serviceBrand: undefined;
 
@@ -56,10 +63,19 @@ export interface ILucosAuthService {
 	loginWithEmail(email: string, password: string): Promise<void>;
 
 	/**
-	 * Register a new account with email and password. Throws with a user-facing
-	 * message on failure — callers are responsible for showing the error.
+	 * Start email sign-up. Gateway sends a verification OTP and does **not** return a JWT.
+	 * Call {@link verifySignupEmail} with the code to complete registration and receive tokens.
 	 */
-	register(email: string, password: string, name?: string): Promise<void>;
+	register(email: string, password: string, name?: string): Promise<ILucosPendingVerification>;
+
+	/**
+	 * Complete sign-up by verifying the 6-digit email OTP. On success stores the JWT
+	 * and signs the user in (same as login).
+	 */
+	verifySignupEmail(email: string, otp: string): Promise<void>;
+
+	/** Resend the sign-up verification OTP for a pending registration. */
+	resendSignupOtp(email: string): Promise<void>;
 
 	/** On startup (and on daemon reconnect): if a JWT is in the keychain, hand it to the daemon. */
 	restore(): Promise<void>;

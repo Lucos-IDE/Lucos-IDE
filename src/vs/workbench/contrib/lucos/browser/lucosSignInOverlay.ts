@@ -312,11 +312,70 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		Object.assign(siSignUpLink.style, { color: 'var(--vscode-textLink-foreground, #06b6d4)', cursor: 'pointer', fontWeight: '600' });
 		siFooter.appendChild(siSignUpLink);
 
+		// === VERIFY EMAIL PANEL (OTP after sign-up) ==========================
+		const verifyPanel = dom.append(card, document.createElement('div'));
+		Object.assign(verifyPanel.style, { display: 'none', flexDirection: 'column' });
+
+		const veTitle = dom.append(verifyPanel, document.createElement('div'));
+		veTitle.textContent = localize('lucos.verify.title', "Check your email");
+		Object.assign(veTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground, #cccccc)', marginBottom: '4px' });
+
+		const veSubtitle = dom.append(verifyPanel, document.createElement('div'));
+		veSubtitle.textContent = localize('lucos.verify.subtitle', "Enter the 6-digit code we sent you.");
+		Object.assign(veSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', marginBottom: '20px' });
+
+		const { input: veOtpInput } = makeInput(verifyPanel, localize('lucos.verify.code', "Verification code"), 'text', '123456', 'one-time-code');
+		veOtpInput.maxLength = 6;
+		veOtpInput.inputMode = 'numeric';
+		veOtpInput.pattern = '[0-9]*';
+		veOtpInput.style.letterSpacing = '4px';
+		veOtpInput.style.fontSize = '18px';
+		veOtpInput.style.textAlign = 'center';
+
+		const veError = makeErrorEl(verifyPanel);
+		const veBtn = makeSubmitBtn(verifyPanel, localize('lucos.verify.submit', "Verify & continue"));
+		veBtn.style.marginBottom = '12px';
+
+		const veResend = document.createElement('button');
+		veResend.type = 'button';
+		veResend.textContent = localize('lucos.verify.resend', "Resend code");
+		Object.assign(veResend.style, {
+			width: '100%', padding: '10px 0', borderRadius: '8px', cursor: 'pointer',
+			background: 'transparent', border: '1px solid var(--vscode-button-border, #3c3c3c)',
+			color: 'var(--vscode-foreground, #cccccc)', fontSize: '13px', fontFamily: 'inherit', marginBottom: '18px',
+		});
+		verifyPanel.appendChild(veResend);
+
+		const veFooter = dom.append(verifyPanel, document.createElement('div'));
+		Object.assign(veFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)' });
+		veFooter.appendChild(document.createTextNode(localize('lucos.verify.wrongEmail', "Wrong email? ")));
+		const veBackLink = document.createElement('span');
+		veBackLink.textContent = localize('lucos.verify.back', "Go back");
+		Object.assign(veBackLink.style, { color: 'var(--vscode-textLink-foreground, #06b6d4)', cursor: 'pointer', fontWeight: '600' });
+		veFooter.appendChild(veBackLink);
+
+		let pendingVerifyEmail = '';
+
 		// --- Panel switch ----------------------------------------------------
-		const showSignUp = () => { signUpPanel.style.display = 'flex'; signInPanel.style.display = 'none'; setError(suError, ''); };
-		const showSignIn = () => { signInPanel.style.display = 'flex'; signUpPanel.style.display = 'none'; setError(siError, ''); };
+		const showOnly = (panel: HTMLElement) => {
+			signUpPanel.style.display = panel === signUpPanel ? 'flex' : 'none';
+			signInPanel.style.display = panel === signInPanel ? 'flex' : 'none';
+			verifyPanel.style.display = panel === verifyPanel ? 'flex' : 'none';
+		};
+		const showSignUp = () => { showOnly(signUpPanel); setError(suError, ''); };
+		const showSignIn = () => { showOnly(signInPanel); setError(siError, ''); };
+		const showVerify = (email: string, message?: string) => {
+			pendingVerifyEmail = email;
+			veSubtitle.textContent = message
+				|| localize('lucos.verify.subtitleEmail', "Enter the 6-digit code sent to {0}.", email);
+			veOtpInput.value = '';
+			setError(veError, '');
+			showOnly(verifyPanel);
+			veOtpInput.focus();
+		};
 		this._register(dom.addDisposableListener(suSignInLink, 'click', showSignIn));
 		this._register(dom.addDisposableListener(siSignUpLink, 'click', showSignUp));
+		this._register(dom.addDisposableListener(veBackLink, 'click', showSignUp));
 
 		// --- Sign Up submit --------------------------------------------------
 		suBtn.addEventListener('click', async () => {
@@ -332,12 +391,57 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			setSubmitting(suBtn, [suNameInput, suEmailInput, suPasswordInput], true, localize('lucos.loading', "Please wait\u2026"));
 			try {
 				this.logService.info('[LucosSignIn] submitting registration', `email=${email}`);
-				await this.authService.register(email, password, name);
+				const result = await this.authService.register(email, password, name);
+				if (this.authService.isSignedIn) {
+					// Legacy gateway returned a JWT immediately.
+					return;
+				}
+				showVerify(result.email, result.message);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				this.logService.error('[LucosSignIn] registration failed:', msg);
 				setError(suError, msg);
+			} finally {
 				setSubmitting(suBtn, [suNameInput, suEmailInput, suPasswordInput], false, undefined, localize('lucos.signUp.submit', "Create account"));
+			}
+		});
+
+		// --- Verify OTP submit -----------------------------------------------
+		veBtn.addEventListener('click', async () => {
+			const otp = veOtpInput.value.trim();
+			setError(veError, '');
+			if (!/^\d{6}$/.test(otp)) {
+				setError(veError, localize('lucos.verify.err.otp', "Enter the 6-digit code from your email."));
+				return;
+			}
+			setSubmitting(veBtn, [veOtpInput], true, localize('lucos.loading', "Please wait\u2026"));
+			veResend.disabled = true;
+			try {
+				this.logService.info('[LucosSignIn] verifying signup OTP', `email=${pendingVerifyEmail}`);
+				await this.authService.verifySignupEmail(pendingVerifyEmail, otp);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.logService.error('[LucosSignIn] verify failed:', msg);
+				setError(veError, msg);
+				setSubmitting(veBtn, [veOtpInput], false, undefined, localize('lucos.verify.submit', "Verify & continue"));
+				veResend.disabled = false;
+			}
+		});
+
+		veResend.addEventListener('click', async () => {
+			if (!pendingVerifyEmail) {
+				return;
+			}
+			setError(veError, '');
+			veResend.disabled = true;
+			try {
+				await this.authService.resendSignupOtp(pendingVerifyEmail);
+				veSubtitle.textContent = localize('lucos.verify.resent', "A new code was sent to {0}.", pendingVerifyEmail);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				setError(veError, msg);
+			} finally {
+				veResend.disabled = false;
 			}
 		});
 
@@ -367,6 +471,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		suPasswordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { suBtn.click(); } });
 		siEmailInput.addEventListener('keydown', e => { if (e.key === 'Enter') { siPasswordInput.focus(); } });
 		siPasswordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { siBtn.click(); } });
+		veOtpInput.addEventListener('keydown', e => { if (e.key === 'Enter') { veBtn.click(); } });
 
 		this.logService.info('[LucosSignIn] overlay DOM appended to document.body');
 		mainWindow.document.body.appendChild(overlay);

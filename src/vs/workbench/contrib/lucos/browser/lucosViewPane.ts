@@ -37,7 +37,7 @@ import { ILucosPatchProposal, ILucosWorkspaceContext, IStartAgentTaskRequest, Lu
 import { taskPayloadString } from '../../../../platform/lucos/common/lucosTaskPayload.js';
 import { LucosSettingId } from '../common/lucosConfiguration.js';
 import { LucosActivityTimeline } from './lucosActivityTimeline.js';
-import { ILucosContextMention, LucosContextPicker } from './lucosContextPicker.js';
+import { ILucosContextMention, ILucosStaticContextOption, LucosContextPicker, LucosStaticContextKind } from './lucosContextPicker.js';
 import { LucosPatchReview } from './lucosPatchReview.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 
@@ -72,6 +72,15 @@ interface IComposerDropdownItem {
 	readonly run: () => void | Promise<void>;
 }
 
+interface IMentionToken {
+	readonly start: number;
+	readonly query: string;
+}
+
+type LucosMentionMenuItem =
+	| { readonly kind: 'static'; readonly option: ILucosStaticContextOption }
+	| { readonly kind: 'file'; readonly mention: ILucosContextMention };
+
 export class LucosChatViewPane extends ViewPane {
 
 	static readonly ID = 'lucos.chatView';
@@ -90,6 +99,7 @@ export class LucosChatViewPane extends ViewPane {
 
 	private welcomeContainer!: HTMLElement;
 	private messagesContainer!: HTMLElement;
+	private composerCard!: HTMLElement;
 	private chipsContainer!: HTMLElement;
 	private inputBox!: HTMLTextAreaElement;
 	private sendButton!: HTMLButtonElement;
@@ -102,6 +112,18 @@ export class LucosChatViewPane extends ViewPane {
 	private patchReview!: LucosPatchReview;
 	private readonly mentions: ILucosContextMention[] = [];
 	private readonly sessionUi = new Map<string, ISessionUiState>();
+
+	/** Active `@` mention menu state. */
+	private mentionMenuOpen = false;
+	private mentionToken: IMentionToken | undefined;
+	private mentionItems: LucosMentionMenuItem[] = [];
+	private mentionHighlightIndex = 0;
+	private mentionMenuElement: HTMLElement | undefined;
+	private mentionHighlightedElement: HTMLElement | undefined;
+	private mentionSearchCts: CancellationTokenSource | undefined;
+	private mentionSearchTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Click listeners for the current mention menu rows (cleared on re-render). */
+	private readonly mentionItemDisposables = this._register(new DisposableStore());
 
 	private readonly turnElements = new Map<string, ITurnElements>();
 	private readonly markdownDisposables = new Map<string, IDisposable>();
@@ -157,6 +179,8 @@ export class LucosChatViewPane extends ViewPane {
 				cts.dispose(true);
 			}
 			this.streamTokens.clear();
+			this.disposeMentionSearch();
+			this.hideMentionMenu();
 		}));
 	}
 
@@ -198,17 +222,18 @@ export class LucosChatViewPane extends ViewPane {
 		this.welcomeContainer = dom.append(this.messagesContainer, dom.$('.lucos-chat-welcome'));
 		this.renderWelcome();
 
-		// Composer: chips → borderless textarea → toolbar (mode · model · @ | send).
+		// Composer: chips → borderless textarea → toolbar (mode · model | send).
+		// Type `@` in the textarea to attach files / selection / workspace context.
 		const composer = dom.append(container, dom.$('.lucos-composer'));
-		const composerCard = dom.append(composer, dom.$('.lucos-composer-card'));
+		this.composerCard = dom.append(composer, dom.$('.lucos-composer-card'));
 
-		this.chipsContainer = dom.append(composerCard, dom.$('.lucos-composer-chips'));
+		this.chipsContainer = dom.append(this.composerCard, dom.$('.lucos-composer-chips'));
 
-		this.inputBox = dom.append(composerCard, dom.$('textarea.lucos-composer-input')) as HTMLTextAreaElement;
-		this.inputBox.placeholder = localize('lucos.chat.inputPlaceholderShort', "Ask Lucos…");
+		this.inputBox = dom.append(this.composerCard, dom.$('textarea.lucos-composer-input')) as HTMLTextAreaElement;
+		this.inputBox.placeholder = localize('lucos.chat.inputPlaceholderShort', "Ask Lucos…  Type @ to attach context");
 		this.inputBox.rows = 1;
 
-		const toolbar = dom.append(composerCard, dom.$('.lucos-composer-toolbar'));
+		const toolbar = dom.append(this.composerCard, dom.$('.lucos-composer-toolbar'));
 		const toolbarLeft = dom.append(toolbar, dom.$('.lucos-composer-toolbar-left'));
 
 		this.modeButton = dom.append(toolbarLeft, dom.$('button.lucos-composer-mode')) as HTMLButtonElement;
@@ -229,24 +254,24 @@ export class LucosChatViewPane extends ViewPane {
 			this.showModelMenu();
 		}));
 
-		const addContextButton = dom.append(toolbarLeft, dom.$('button.lucos-composer-context')) as HTMLButtonElement;
-		addContextButton.textContent = '@';
-		addContextButton.title = localize('lucos.chat.addContext', "Attach context");
-		addContextButton.setAttribute('aria-label', localize('lucos.chat.addContext', "Attach context"));
-		this._register(dom.addDisposableListener(addContextButton, 'click', () => this.addContext()));
-
 		this.sendButton = dom.append(toolbar, dom.$('button.lucos-composer-send')) as HTMLButtonElement;
 		this.sendButton.classList.add(...ThemeIcon.asClassNameArray(Codicon.arrowUp));
 		this.sendButton.title = localize('lucos.chat.send', "Send");
 		this.sendButton.setAttribute('aria-label', localize('lucos.chat.send', "Send"));
 
-		this._register(dom.addDisposableListener(this.inputBox, 'keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
-				e.preventDefault();
-				this.onSend();
-			}
+		this._register(dom.addDisposableListener(this.inputBox, 'keydown', (e: KeyboardEvent) => this.onInputKeyDown(e)));
+		this._register(dom.addDisposableListener(this.inputBox, 'input', () => {
+			this.resizeInput();
+			this.onComposerInput();
 		}));
-		this._register(dom.addDisposableListener(this.inputBox, 'input', () => this.resizeInput()));
+		this._register(dom.addDisposableListener(this.inputBox, 'blur', () => {
+			// Delay so click on a mention item can fire first.
+			setTimeout(() => {
+				if (this.mentionMenuOpen && !this.composerCard.contains(dom.getActiveElement())) {
+					this.hideMentionMenu();
+				}
+			}, 150);
+		}));
 		this._register(dom.addDisposableListener(this.sendButton, 'click', () => this.onSend()));
 
 		this._register(this.lucosDaemonService.onDidChangeConnectionState(() => this.updateBanner()));
@@ -624,18 +649,28 @@ export class LucosChatViewPane extends ViewPane {
 		);
 	}
 
-	private async addContext(): Promise<void> {
-		const mention = await this.contextPicker.pick();
-		if (!mention) {
+	private addContext(mention: ILucosContextMention, token?: IMentionToken): void {
+		// Avoid duplicate file chips for the same path.
+		if (mention.type === 'file' && mention.path && this.mentions.some(m => m.type === 'file' && m.path === mention.path)) {
+			if (token) {
+				this.stripMentionToken(token);
+			}
+			this.hideMentionMenu();
 			return;
 		}
 		this.mentions.push(mention);
 		const chip = dom.append(this.chipsContainer, dom.$('span.lucos-chat-chip'));
 		chip.textContent = mention.label;
+		chip.title = mention.path ?? mention.description ?? mention.label;
 		this.chipsContainer.classList.add('has-chips');
+		if (token) {
+			this.stripMentionToken(token);
+		}
+		this.hideMentionMenu();
 	}
 
 	private clearContext(): void {
+		this.hideMentionMenu();
 		this.mentions.length = 0;
 		dom.clearNode(this.chipsContainer);
 		this.chipsContainer.classList.remove('has-chips');
@@ -645,12 +680,279 @@ export class LucosChatViewPane extends ViewPane {
 		if (!this.mentions.length) {
 			return undefined;
 		}
+		const filePaths = this.mentions.filter(m => m.type === 'file' && m.path).map(m => m.path!);
 		return {
 			selection: this.mentions.find(m => m.type === 'selection')?.text,
 			activeFile: this.mentions.find(m => m.type === 'file' || m.type === 'selection')?.path,
 			workspaceId: this.mentions.find(m => m.type === 'workspace')?.workspaceId,
-			openBuffers: this.mentions.filter(m => m.type === 'file' && m.path).map(m => m.path!),
+			openBuffers: filePaths.length ? filePaths : undefined,
 		};
+	}
+
+	// --- @ mention menu -------------------------------------------------------
+
+	private onInputKeyDown(e: KeyboardEvent): void {
+		if (this.mentionMenuOpen) {
+			if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				this.moveMentionHighlight(1);
+				return;
+			}
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				this.moveMentionHighlight(-1);
+				return;
+			}
+			if (e.key === 'Enter' || e.key === 'Tab') {
+				e.preventDefault();
+				this.acceptMentionHighlight();
+				return;
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				this.hideMentionMenu();
+				return;
+			}
+		}
+		if (e.key === 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			this.onSend();
+		}
+	}
+
+	private onComposerInput(): void {
+		const token = this.detectMentionToken();
+		if (!token) {
+			this.hideMentionMenu();
+			return;
+		}
+		this.mentionToken = token;
+		this.refreshMentionMenu(token);
+	}
+
+	/**
+	 * Find an active `@query` token: `@` at start-of-input or after whitespace,
+	 * with no whitespace between `@` and the caret.
+	 */
+	private detectMentionToken(): IMentionToken | undefined {
+		const value = this.inputBox.value;
+		const caret = this.inputBox.selectionStart ?? value.length;
+		const before = value.slice(0, caret);
+		const at = before.lastIndexOf('@');
+		if (at < 0) {
+			return undefined;
+		}
+		if (at > 0 && !/\s/.test(before.charAt(at - 1))) {
+			return undefined;
+		}
+		const query = before.slice(at + 1);
+		if (/\s/.test(query)) {
+			return undefined;
+		}
+		return { start: at, query };
+	}
+
+	private refreshMentionMenu(token: IMentionToken): void {
+		const staticItems: LucosMentionMenuItem[] = this.contextPicker.getStaticOptions(token.query)
+			.map(option => ({ kind: 'static' as const, option }));
+
+		// Keep prior file items until the debounced search returns (or clear when query empty).
+		const priorFiles = token.query
+			? this.mentionItems.filter((i): i is Extract<LucosMentionMenuItem, { kind: 'file' }> => i.kind === 'file')
+			: [];
+		this.mentionItems = [...staticItems, ...priorFiles];
+		this.mentionHighlightIndex = 0;
+
+		if (!this.mentionMenuOpen) {
+			this.showMentionMenu();
+		} else {
+			this.renderMentionMenuItems();
+		}
+
+		this.scheduleFileSearch(token.query);
+	}
+
+	private scheduleFileSearch(query: string): void {
+		if (this.mentionSearchTimer !== undefined) {
+			clearTimeout(this.mentionSearchTimer);
+			this.mentionSearchTimer = undefined;
+		}
+		this.mentionSearchCts?.dispose(true);
+		this.mentionSearchCts = new CancellationTokenSource();
+		const cts = this.mentionSearchCts;
+		this.mentionSearchTimer = setTimeout(() => {
+			this.mentionSearchTimer = undefined;
+			void this.runFileSearch(query, cts);
+		}, 120);
+	}
+
+	private async runFileSearch(query: string, cts: CancellationTokenSource): Promise<void> {
+		try {
+			const files = await this.contextPicker.searchFiles(query, cts.token);
+			if (cts.token.isCancellationRequested || !this.mentionMenuOpen) {
+				return;
+			}
+			const staticItems = this.mentionItems.filter(i => i.kind === 'static');
+			const fileItems: LucosMentionMenuItem[] = files.map(mention => ({ kind: 'file', mention }));
+			this.mentionItems = [...staticItems, ...fileItems];
+			if (this.mentionHighlightIndex >= this.mentionItems.length) {
+				this.mentionHighlightIndex = Math.max(0, this.mentionItems.length - 1);
+			}
+			this.renderMentionMenuItems();
+		} catch {
+			// Search failed — keep static options only.
+		}
+	}
+
+	private showMentionMenu(): void {
+		const store = new DisposableStore();
+		this.mentionMenuOpen = true;
+		this.contextViewService.showContextView({
+			getAnchor: () => this.composerCard,
+			anchorPosition: AnchorPosition.ABOVE,
+			anchorAlignment: AnchorAlignment.LEFT,
+			render: container => {
+				container.classList.add('lucos-composer-dropdown-host');
+				const menu = dom.append(container, dom.$('.lucos-composer-dropdown.lucos-mention-menu'));
+				menu.setAttribute('role', 'listbox');
+				menu.setAttribute('aria-label', localize('lucos.chat.mentionMenu', "Attach context"));
+				this.mentionMenuElement = menu;
+				this.renderMentionMenuItems();
+				return store;
+			},
+			onHide: () => {
+				this.mentionMenuOpen = false;
+				this.mentionMenuElement = undefined;
+				this.mentionHighlightedElement = undefined;
+				this.mentionToken = undefined;
+				this.mentionItems = [];
+				this.mentionItemDisposables.clear();
+				this.disposeMentionSearch();
+				store.dispose();
+			},
+		});
+	}
+
+	private hideMentionMenu(): void {
+		if (!this.mentionMenuOpen) {
+			this.disposeMentionSearch();
+			return;
+		}
+		this.contextViewService.hideContextView();
+	}
+
+	private disposeMentionSearch(): void {
+		if (this.mentionSearchTimer !== undefined) {
+			clearTimeout(this.mentionSearchTimer);
+			this.mentionSearchTimer = undefined;
+		}
+		this.mentionSearchCts?.dispose(true);
+		this.mentionSearchCts = undefined;
+	}
+
+	private renderMentionMenuItems(): void {
+		const menu = this.mentionMenuElement;
+		if (!menu) {
+			return;
+		}
+		dom.clearNode(menu);
+		this.mentionItemDisposables.clear();
+		this.mentionHighlightedElement = undefined;
+
+		if (!this.mentionItems.length) {
+			const empty = dom.append(menu, dom.$('.lucos-mention-empty'));
+			empty.textContent = localize('lucos.chat.mentionEmpty', "No matching context");
+			return;
+		}
+
+		this.mentionItems.forEach((item, index) => {
+			const option = dom.append(menu, dom.$('button.lucos-composer-dropdown-item.lucos-mention-item')) as HTMLButtonElement;
+			option.type = 'button';
+			option.setAttribute('role', 'option');
+			option.setAttribute('aria-selected', String(index === this.mentionHighlightIndex));
+			if (index === this.mentionHighlightIndex) {
+				option.classList.add('highlighted');
+				this.mentionHighlightedElement = option;
+			}
+
+			const icon = dom.append(option, dom.$('span.lucos-mention-icon'));
+			if (item.kind === 'static') {
+				const codicon = item.option.kind === 'selection' ? Codicon.selection
+					: item.option.kind === 'activeFile' ? Codicon.file
+						: Codicon.folder;
+				icon.classList.add(...ThemeIcon.asClassNameArray(codicon));
+				const label = dom.append(option, dom.$('span.lucos-composer-dropdown-label'));
+				label.textContent = item.option.label;
+				const desc = dom.append(option, dom.$('span.lucos-mention-desc'));
+				desc.textContent = item.option.description;
+			} else {
+				icon.classList.add(...ThemeIcon.asClassNameArray(Codicon.file));
+				const label = dom.append(option, dom.$('span.lucos-composer-dropdown-label'));
+				label.textContent = item.mention.label.replace(/^@/, '');
+				if (item.mention.description) {
+					const desc = dom.append(option, dom.$('span.lucos-mention-desc'));
+					desc.textContent = item.mention.description;
+				}
+			}
+
+			this.mentionItemDisposables.add(dom.addDisposableListener(option, 'mousedown', e => {
+				// Prevent textarea blur from closing before click.
+				e.preventDefault();
+			}));
+			this.mentionItemDisposables.add(dom.addDisposableListener(option, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.mentionHighlightIndex = index;
+				this.acceptMentionHighlight();
+			}));
+		});
+	}
+
+	private moveMentionHighlight(delta: number): void {
+		if (!this.mentionItems.length) {
+			return;
+		}
+		const len = this.mentionItems.length;
+		this.mentionHighlightIndex = (this.mentionHighlightIndex + delta + len) % len;
+		this.renderMentionMenuItems();
+		this.mentionHighlightedElement?.scrollIntoView({ block: 'nearest' });
+	}
+
+	private acceptMentionHighlight(): void {
+		const item = this.mentionItems[this.mentionHighlightIndex];
+		const token = this.mentionToken;
+		if (!item || !token) {
+			this.hideMentionMenu();
+			return;
+		}
+		if (item.kind === 'file') {
+			this.addContext(item.mention, token);
+			return;
+		}
+		const mention = this.contextPicker.captureStatic(item.option.kind as LucosStaticContextKind);
+		if (!mention) {
+			const missing = item.option.kind === 'selection'
+				? localize('lucos.chat.mentionNoSelection', "No editor selection to attach.")
+				: item.option.kind === 'activeFile'
+					? localize('lucos.chat.mentionNoActiveFile', "No active file to attach.")
+					: localize('lucos.chat.mentionNoWorkspace', "No workspace folder open.");
+			this.notificationService.notify({ severity: Severity.Info, message: missing });
+			this.hideMentionMenu();
+			return;
+		}
+		this.addContext(mention, token);
+	}
+
+	private stripMentionToken(token: IMentionToken): void {
+		const value = this.inputBox.value;
+		const caret = this.inputBox.selectionStart ?? value.length;
+		const end = Math.max(caret, token.start + 1 + token.query.length);
+		const next = value.slice(0, token.start) + value.slice(end);
+		this.inputBox.value = next;
+		const pos = token.start;
+		this.inputBox.setSelectionRange(pos, pos);
+		this.resizeInput();
+		this.inputBox.focus();
 	}
 
 	private handleExternalRequest(request: ILucosChatRequest): void {
