@@ -6,16 +6,14 @@
 /**
  * Authenticode signing helpers for the Lucos build pipeline.
  *
- * Reads a base64-encoded PFX bundle and its passphrase from CI environment
- * variables, writes the certificate to a private temp file, invokes
- * signtool.exe, then deletes the temp cert.
+ * Supports two credential modes (checked in order):
  *
- * Required CI secrets (environment variables):
- *   WINDOWS_PFX_DATA      Base64-encoded PFX / PKCS#12 certificate bundle.
- *   WINDOWS_PFX_PASSWORD  Passphrase protecting the PFX.
+ * 1) DigiCert KeyLocker (preferred for CI):
+ *    SM_HOST, SM_API_KEY, SM_CLIENT_CERT_FILE, SM_CLIENT_CERT_PASSWORD, SM_KEYPAIR_ALIAS
+ *    Requires DigiCert client tools (`smctl`) on PATH (install via DigiCert GitHub Action).
  *
- * Both variables must be present; missing ones throw at call time so the build
- * fails loudly rather than producing an unsigned artifact.
+ * 2) Classic software PFX (legacy / local):
+ *    WINDOWS_PFX_DATA (base64), WINDOWS_PFX_PASSWORD
  */
 
 import cp from 'child_process';
@@ -35,18 +33,73 @@ function requireEnv(name: string): string {
 	return val;
 }
 
+function hasKeyLockerCredentials(): boolean {
+	return !!(
+		process.env['SM_API_KEY'] &&
+		process.env['SM_CLIENT_CERT_FILE'] &&
+		process.env['SM_CLIENT_CERT_PASSWORD'] &&
+		process.env['SM_KEYPAIR_ALIAS']
+	);
+}
+
+function hasPfxCredentials(): boolean {
+	return !!(process.env['WINDOWS_PFX_DATA'] && process.env['WINDOWS_PFX_PASSWORD']);
+}
+
+function spawnInherit(command: string, args: string[]): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
+		cp.spawn(command, args, { stdio: 'inherit', env: process.env, shell: false })
+			.on('error', reject)
+			.on('exit', code => {
+				code === 0
+					? resolve()
+					: reject(new Error(`${command} exited with code ${code} (${args.join(' ')})`));
+			});
+	});
+}
+
 /**
- * Signs a single Windows PE binary using signtool.exe.
- *
- * Applies:
- *  - SHA-256 primary file digest   (/fd sha256)
- *  - RFC-3161 counter-signature    (/tr … /td sha256)
- *
- * The PFX is decoded from WINDOWS_PFX_DATA (base64) and written to a
- * temporary file with mode 0o600.  The file is deleted whether signing
- * succeeds or fails.
+ * Signs a single Windows PE binary.
+ * Prefers DigiCert KeyLocker when configured; otherwise uses a software PFX.
  */
 export async function signFile(filePath: string): Promise<void> {
+	if (hasKeyLockerCredentials()) {
+		await signFileWithKeyLocker(filePath);
+		return;
+	}
+	if (hasPfxCredentials()) {
+		await signFileWithPfx(filePath);
+		return;
+	}
+	throw new Error(
+		'[sign-windows] No signing credentials. Set DigiCert KeyLocker env ' +
+		'(SM_API_KEY, SM_CLIENT_CERT_FILE, SM_CLIENT_CERT_PASSWORD, SM_KEYPAIR_ALIAS) ' +
+		'or WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD.'
+	);
+}
+
+/**
+ * Sign via DigiCert KeyLocker using `smctl sign` (hash-based; private key never leaves HSM).
+ */
+async function signFileWithKeyLocker(filePath: string): Promise<void> {
+	const alias = requireEnv('SM_KEYPAIR_ALIAS');
+	if (!process.env['SM_HOST']) {
+		process.env['SM_HOST'] = 'https://clientauth.one.digicert.com';
+	}
+
+	console.log(`[sign-windows] KeyLocker signing ${path.basename(filePath)} (alias=${alias})`);
+	await spawnInherit('smctl', [
+		'sign',
+		`--keypair-alias=${alias}`,
+		`--input=${filePath}`,
+		`--verbose`,
+	]);
+}
+
+/**
+ * Sign via classic Authenticode PFX with signtool.exe.
+ */
+async function signFileWithPfx(filePath: string): Promise<void> {
 	const pfxBase64 = requireEnv('WINDOWS_PFX_DATA');
 	const pfxPassword = requireEnv('WINDOWS_PFX_PASSWORD');
 
@@ -65,8 +118,8 @@ export async function signFile(filePath: string): Promise<void> {
 		throw err;
 	}
 
-	await new Promise<void>((resolve, reject) => {
-		const args = [
+	try {
+		await spawnInherit('signtool.exe', [
 			'sign',
 			'/fd', 'sha256',
 			'/td', 'sha256',
@@ -74,17 +127,10 @@ export async function signFile(filePath: string): Promise<void> {
 			'/f', pfxPath,
 			'/p', pfxPassword,
 			filePath,
-		];
-
-		cp.spawn('signtool.exe', args, { stdio: 'inherit' })
-			.on('error', err => { cleanup(); reject(err); })
-			.on('exit', code => {
-				cleanup();
-				code === 0
-					? resolve()
-					: reject(new Error(`signtool.exe exited with code ${code} signing "${path.basename(filePath)}"`));
-			});
-	});
+		]);
+	} finally {
+		cleanup();
+	}
 }
 
 /**
@@ -98,6 +144,11 @@ export async function signDirectory(dir: string): Promise<void> {
 		console.log(`[sign-windows] Signing ${f}`);
 		await signFile(f);
 	}
+}
+
+/** True when either KeyLocker or PFX credentials are present. */
+export function canSignWindows(): boolean {
+	return hasKeyLockerCredentials() || hasPfxCredentials();
 }
 
 function findExeFiles(dir: string): string[] {

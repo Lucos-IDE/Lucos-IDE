@@ -26,7 +26,9 @@
 #  Production only:
 #    APPLE_CERT_P12, APPLE_CERT_PASSWORD, APPLE_TEAM_ID
 #    APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD, APPLE_ID
-#    WINDOWS_PFX_DATA, WINDOWS_PFX_PASSWORD
+#    DigiCert KeyLocker: SM_API_KEY, SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD
+#      (optional) SM_KEYPAIR_ALIAS / vars.SM_HOST — defaults key_1360134193 + clientauth.one.digicert.com
+#    Legacy PFX fallback: WINDOWS_PFX_DATA, WINDOWS_PFX_PASSWORD
 #    GPG_PRIVATE_KEY, GPG_KEY_ID
 #  Both envs (configure in repo secrets or per-environment secrets):
 #    LUCOS_SENTRY_DSN   (optional)
@@ -538,10 +540,73 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare DigiCert KeyLocker client certificate
+        id: digicert-prep
+        if: needs.resolve-env.outputs.is_prod == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:SM_API_KEY) -or [string]::IsNullOrEmpty($env:SM_CLIENT_CERT_FILE_B64)) {
+            Write-Host "DigiCert KeyLocker secrets not set; skipping KeyLocker setup."
+            Write-Output "enabled=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $certPath = Join-Path $env:RUNNER_TEMP 'sm_client_cert.p12'
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
+          Write-Output "SM_CLIENT_CERT_FILE=$certPath" >> $env:GITHUB_ENV
+          $hostUrl = '${{ vars.SM_HOST }}'
+          if ([string]::IsNullOrEmpty($hostUrl)) { $hostUrl = 'https://clientauth.one.digicert.com' }
+          Write-Output "SM_HOST=$hostUrl" >> $env:GITHUB_ENV
+          $alias = '${{ secrets.SM_KEYPAIR_ALIAS }}'
+          if ([string]::IsNullOrEmpty($alias)) { $alias = '${{ vars.SM_KEYPAIR_ALIAS }}' }
+          if ([string]::IsNullOrEmpty($alias)) { $alias = 'key_1360134193' }
+          Write-Output "SM_KEYPAIR_ALIAS=$alias" >> $env:GITHUB_ENV
+          Write-Host "KeyLocker enabled (alias=$alias host=$hostUrl)"
+          Write-Output "enabled=true" >> $env:GITHUB_OUTPUT
+
+      - name: Setup DigiCert KeyLocker client tools
+        if: needs.resolve-env.outputs.is_prod == 'true' && steps.digicert-prep.outputs.enabled == 'true'
+        uses: digicert/code-signing-software-trust-action@v1
+        with:
+          simple-signing-mode: true
+        env:
+          SM_HOST: ${{ env.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+
+      - name: Sign packaged Windows binaries (KeyLocker or PFX)
+        if: needs.resolve-env.outputs.is_prod == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SM_HOST: ${{ env.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ env.SM_KEYPAIR_ALIAS }}
+          WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          $appRoot = Join-Path $env:RUNNER_WORKSPACE 'Lucos-win32-x64'
+          $hasKeyLocker = -not [string]::IsNullOrEmpty($env:SM_API_KEY) -and (Test-Path -LiteralPath $env:SM_CLIENT_CERT_FILE -ErrorAction SilentlyContinue)
+          $hasPfx = -not [string]::IsNullOrEmpty($env:WINDOWS_PFX_DATA)
+          if (-not $hasKeyLocker -and -not $hasPfx) {
+            Write-Host "No Windows signing credentials; leaving binaries unsigned."
+            exit 0
+          }
+          npm exec -- node build/azure-pipelines/common/sign-lucos-directory.ts $appRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build Windows installer (sign in production)
         shell: pwsh
         run: |
-          $shouldSign = ('${{ needs.resolve-env.outputs.is_prod }}' -eq 'true') -and ($env:WINDOWS_PFX_DATA -ne '')
+          $shouldSign = ('${{ needs.resolve-env.outputs.is_prod }}' -eq 'true') -and (
+            (-not [string]::IsNullOrEmpty($env:SM_API_KEY) -and (Test-Path -LiteralPath $env:SM_CLIENT_CERT_FILE -ErrorAction SilentlyContinue)) -or
+            (-not [string]::IsNullOrEmpty($env:WINDOWS_PFX_DATA))
+          )
           if ($shouldSign) {
             npm run gulp lucos-win32-x64-system-setup -- --sign-lucos
           } else {
@@ -550,6 +615,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SM_HOST: ${{ env.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ env.SM_KEYPAIR_ALIAS }}
           WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
 

@@ -16,14 +16,18 @@ async function main() {
 
 	// Determine signing mode.
 	// - ESRP (Microsoft internal): EsrpCliDllPath env var is present.
-	// - Lucos (fork / external CI): WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD env vars are present.
+	// - DigiCert KeyLocker: SM_API_KEY + SM_KEYPAIR_ALIAS (+ client cert) present.
+	// - Lucos software PFX: WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD present.
 	const useEsrp = !!process.env['EsrpCliDllPath'];
-	const useLucos = !useEsrp && !!(process.env['WINDOWS_PFX_DATA'] && process.env['WINDOWS_PFX_PASSWORD']);
+	const useKeyLocker = !useEsrp && !!(process.env['SM_API_KEY'] && process.env['SM_KEYPAIR_ALIAS'] && process.env['SM_CLIENT_CERT_FILE']);
+	const useLucosPfx = !useEsrp && !useKeyLocker && !!(process.env['WINDOWS_PFX_DATA'] && process.env['WINDOWS_PFX_PASSWORD']);
+	const useLucos = useKeyLocker || useLucosPfx;
 
 	if (!useEsrp && !useLucos) {
 		throw new Error(
-			'No signing credentials found. Set either EsrpCliDllPath (ESRP) or ' +
-			'WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD (Lucos Authenticode).'
+			'No signing credentials found. Set either EsrpCliDllPath (ESRP), ' +
+			'DigiCert KeyLocker (SM_API_KEY, SM_CLIENT_CERT_FILE, SM_CLIENT_CERT_PASSWORD, SM_KEYPAIR_ALIAS), ' +
+			'or WINDOWS_PFX_DATA + WINDOWS_PFX_PASSWORD.'
 		);
 	}
 
@@ -51,10 +55,8 @@ async function main() {
 			await streamProcessOutputAndCheckResult('Codesign context menu appx package', codesignTask3);
 		}
 	} else {
-		// Lucos Authenticode path: sign all .exe files (Electron binary +
-		// lucos-daemon.exe + inno_updater.exe) using signtool.exe with the
-		// certificate stored in CI secrets.
-		printBanner('Codesign executables (Lucos / signtool)');
+		// Lucos Authenticode path: DigiCert KeyLocker (preferred) or software PFX.
+		printBanner(useKeyLocker ? 'Codesign executables (DigiCert KeyLocker)' : 'Codesign executables (Lucos / PFX)');
 		await signDirectory(codeSigningFolderPath);
 	}
 
