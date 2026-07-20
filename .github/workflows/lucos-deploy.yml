@@ -299,7 +299,7 @@ jobs:
   build-darwin-x64:
     name: Build macOS x64
     needs: [resolve-env, compile]
-    runs-on: macos-13
+    runs-on: macos-15-intel
     env:
       VSCODE_ARCH: x64
       NPM_ARCH: x64
