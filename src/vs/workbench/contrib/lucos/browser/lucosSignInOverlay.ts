@@ -4,9 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';
-import { mainWindow } from '../../../../base/browser/window.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
+import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
@@ -25,6 +25,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 	constructor(
 		@ILucosAuthService private readonly authService: ILucosAuthService,
 		@ILogService private readonly logService: ILogService,
+		@ILayoutService private readonly layoutService: ILayoutService,
 	) {
 		super();
 		this.logService.info('[LucosSignIn] overlay contribution created, waiting for session restore…');
@@ -65,15 +66,16 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		Object.assign(overlay.style, {
 			position: 'fixed', top: '0', left: '0', right: '0', bottom: '0',
 			zIndex: '99999', display: 'none', alignItems: 'center', justifyContent: 'center',
-			background: 'var(--vscode-sideBar-background, #1e1e2e)',
+			background: 'var(--vscode-sideBar-background)',
+			color: 'var(--vscode-foreground)',
 		});
 
 		// Card
 		const card = dom.append(overlay, document.createElement('div'));
 		Object.assign(card.style, {
-			background: 'var(--vscode-editorWidget-background, #252526)',
+			background: 'var(--vscode-editorWidget-background)',
 			border: '1px solid var(--vscode-widget-border, rgba(127,127,127,0.2))',
-			borderRadius: '16px', boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
+			borderRadius: '16px', boxShadow: '0 24px 64px var(--vscode-widget-shadow, rgba(0,0,0,0.3))',
 			width: '400px', maxHeight: '92vh', overflowY: 'auto',
 			padding: '36px 32px', boxSizing: 'border-box',
 			display: 'flex', flexDirection: 'column',
@@ -108,17 +110,17 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			Object.assign(btn.style, {
 				display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
 				width: '100%', padding: '11px 16px', borderRadius: '8px', cursor: 'pointer',
-				background: 'var(--vscode-button-secondaryBackground, #f8f9fa)',
-				color: 'var(--vscode-button-secondaryForeground, #1f1f1f)',
-				border: '1.5px solid var(--vscode-button-border, #dadce0)',
+				background: 'var(--vscode-button-secondaryBackground)',
+				color: 'var(--vscode-button-secondaryForeground)',
+				border: '1.5px solid var(--vscode-button-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)))',
 				fontSize: '14px', fontWeight: '500', fontFamily: 'inherit', outline: 'none',
 			});
 			btn.appendChild(googleIconSvg());
 			const span = document.createElement('span');
 			span.textContent = label;
 			btn.appendChild(span);
-			btn.addEventListener('mouseover', () => { btn.style.background = 'var(--vscode-button-secondaryHoverBackground, #f0f1f3)'; });
-			btn.addEventListener('mouseout', () => { btn.style.background = 'var(--vscode-button-secondaryBackground, #f8f9fa)'; });
+			btn.addEventListener('mouseover', () => { btn.style.background = 'var(--vscode-button-secondaryHoverBackground)'; });
+			btn.addEventListener('mouseout', () => { btn.style.background = 'var(--vscode-button-secondaryBackground)'; });
 			btn.addEventListener('click', () => {
 				this.logService.info('[LucosSignIn] Google button clicked');
 				void this.authService.loginWithGoogle();
@@ -129,10 +131,10 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		const buildDivider = (text: string): HTMLElement => {
 			const row = document.createElement('div');
 			Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '10px', margin: '18px 0' });
-			const line = () => { const l = document.createElement('div'); Object.assign(l.style, { flex: '1', height: '1px', background: 'var(--vscode-editorGroup-border, #3c3c3c)' }); return l; };
+			const line = () => { const l = document.createElement('div'); Object.assign(l.style, { flex: '1', height: '1px', background: 'var(--vscode-editorGroup-border)' }); return l; };
 			const lbl = document.createElement('span');
 			lbl.textContent = text;
-			Object.assign(lbl.style, { fontSize: '12px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', whiteSpace: 'nowrap' });
+			Object.assign(lbl.style, { fontSize: '12px', color: 'var(--vscode-descriptionForeground)', whiteSpace: 'nowrap' });
 			row.appendChild(line()); row.appendChild(lbl); row.appendChild(line());
 			return row;
 		};
@@ -142,20 +144,20 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '14px' });
 			const lbl = document.createElement('label');
 			lbl.textContent = labelText;
-			Object.assign(lbl.style, { fontSize: '13px', fontWeight: '500', color: 'var(--vscode-foreground, #cccccc)' });
+			Object.assign(lbl.style, { fontSize: '13px', fontWeight: '500', color: 'var(--vscode-foreground)' });
 			wrap.appendChild(lbl);
 			const input = document.createElement('input');
 			input.type = type; input.placeholder = placeholder;
 			if (autocomplete) { input.setAttribute('autocomplete', autocomplete); }
 			Object.assign(input.style, {
 				padding: '10px 12px', borderRadius: '8px', fontSize: '13px', outline: 'none',
-				border: '1.5px solid var(--vscode-input-border, #3c3c3c)',
-				background: 'var(--vscode-input-background, #3c3c3c)',
-				color: 'var(--vscode-input-foreground, #cccccc)',
+				border: '1.5px solid var(--vscode-input-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)))',
+				background: 'var(--vscode-input-background)',
+				color: 'var(--vscode-input-foreground)',
 				width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
 			});
-			input.addEventListener('focus', () => { input.style.borderColor = 'var(--vscode-focusBorder, #6366f1)'; input.style.outline = '1px solid var(--vscode-focusBorder, #6366f1)'; });
-			input.addEventListener('blur', () => { input.style.borderColor = 'var(--vscode-input-border, #3c3c3c)'; input.style.outline = 'none'; });
+			input.addEventListener('focus', () => { input.style.borderColor = 'var(--vscode-focusBorder)'; input.style.outline = '1px solid var(--vscode-focusBorder)'; });
+			input.addEventListener('blur', () => { input.style.borderColor = 'var(--vscode-input-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)))'; input.style.outline = 'none'; });
 			wrap.appendChild(input);
 			parent.appendChild(wrap);
 			return { wrap, input };
@@ -173,7 +175,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			Object.assign(eye.style, {
 				position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
 				background: 'none', border: 'none', cursor: 'pointer', padding: '3px',
-				color: 'var(--vscode-descriptionForeground, #9d9d9d)',
+				color: 'var(--vscode-descriptionForeground)',
 				display: 'flex', alignItems: 'center',
 			});
 			const eyeSpan = document.createElement('span');
@@ -207,7 +209,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 		const makeErrorEl = (parent: HTMLElement): HTMLElement => {
 			const el = document.createElement('div');
-			Object.assign(el.style, { fontSize: '12px', color: 'var(--vscode-errorForeground, #f48771)', display: 'none', lineHeight: '1.4', marginBottom: '10px' });
+			Object.assign(el.style, { fontSize: '12px', color: 'var(--vscode-errorForeground)', display: 'none', lineHeight: '1.4', marginBottom: '10px' });
 			parent.appendChild(el);
 			return el;
 		};
@@ -236,7 +238,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		logoBox.textContent = '✦';
 		const logoText = dom.append(logoRow, document.createElement('div'));
 		logoText.textContent = 'LUCOS';
-		Object.assign(logoText.style, { fontSize: '15px', fontWeight: '700', letterSpacing: '2px', color: 'var(--vscode-foreground, #cccccc)' });
+		Object.assign(logoText.style, { fontSize: '15px', fontWeight: '700', letterSpacing: '2px', color: 'var(--vscode-foreground)' });
 
 		// === SIGN UP PANEL (default) =========================================
 		const signUpPanel = dom.append(card, document.createElement('div'));
@@ -244,11 +246,11 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 		const suTitle = dom.append(signUpPanel, document.createElement('div'));
 		suTitle.textContent = localize('lucos.signUp.title', "Create your account");
-		Object.assign(suTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground, #cccccc)', marginBottom: '4px' });
+		Object.assign(suTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground)', marginBottom: '4px' });
 
 		const suSubtitle = dom.append(signUpPanel, document.createElement('div'));
 		suSubtitle.textContent = localize('lucos.signUp.subtitle', "Get started with lucos.com in seconds.");
-		Object.assign(suSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', marginBottom: '20px' });
+		Object.assign(suSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground)', marginBottom: '20px' });
 
 		signUpPanel.appendChild(buildGoogleBtn(localize('lucos.signUp.google', "Sign up with Google")));
 		signUpPanel.appendChild(buildDivider(localize('lucos.signUp.or', "or sign up with email")));
@@ -265,7 +267,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		Object.assign(termsCheck.style, { marginTop: '2px', cursor: 'pointer', flexShrink: '0', accentColor: '#6366f1' });
 		const termsLbl = document.createElement('span');
 		termsLbl.textContent = localize('lucos.signUp.terms', "I agree to the Terms & Privacy Policy");
-		Object.assign(termsLbl.style, { fontSize: '12px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', lineHeight: '1.5' });
+		Object.assign(termsLbl.style, { fontSize: '12px', color: 'var(--vscode-descriptionForeground)', lineHeight: '1.5' });
 		termsRow.appendChild(termsCheck); termsRow.appendChild(termsLbl);
 		signUpPanel.appendChild(termsRow);
 
@@ -274,11 +276,11 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		suBtn.style.marginBottom = '18px';
 
 		const suFooter = dom.append(signUpPanel, document.createElement('div'));
-		Object.assign(suFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)' });
+		Object.assign(suFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground)' });
 		suFooter.appendChild(document.createTextNode(localize('lucos.signUp.haveAccount', "Already have an account? ")));
 		const suSignInLink = document.createElement('span');
 		suSignInLink.textContent = localize('lucos.signUp.signInLink', "Sign in");
-		Object.assign(suSignInLink.style, { color: 'var(--vscode-textLink-foreground, #06b6d4)', cursor: 'pointer', fontWeight: '600' });
+		Object.assign(suSignInLink.style, { color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontWeight: '600' });
 		suFooter.appendChild(suSignInLink);
 
 		// === SIGN IN PANEL ===================================================
@@ -287,11 +289,11 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 		const siTitle = dom.append(signInPanel, document.createElement('div'));
 		siTitle.textContent = localize('lucos.signIn.pageTitle', "Welcome back");
-		Object.assign(siTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground, #cccccc)', marginBottom: '4px' });
+		Object.assign(siTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground)', marginBottom: '4px' });
 
 		const siSubtitle = dom.append(signInPanel, document.createElement('div'));
 		siSubtitle.textContent = localize('lucos.signIn.pageSubtitle', "Sign in to your Lucos account");
-		Object.assign(siSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', marginBottom: '20px' });
+		Object.assign(siSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground)', marginBottom: '20px' });
 
 		signInPanel.appendChild(buildGoogleBtn(localize('lucos.signIn.google', "Sign in with Google")));
 		signInPanel.appendChild(buildDivider(localize('lucos.signIn.or', "or sign in with email")));
@@ -305,11 +307,11 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		siBtn.style.marginBottom = '18px';
 
 		const siFooter = dom.append(signInPanel, document.createElement('div'));
-		Object.assign(siFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)' });
+		Object.assign(siFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground)' });
 		siFooter.appendChild(document.createTextNode(localize('lucos.signIn.noAccount', "Don't have an account? ")));
 		const siSignUpLink = document.createElement('span');
 		siSignUpLink.textContent = localize('lucos.signIn.signUpLink', "Sign up");
-		Object.assign(siSignUpLink.style, { color: 'var(--vscode-textLink-foreground, #06b6d4)', cursor: 'pointer', fontWeight: '600' });
+		Object.assign(siSignUpLink.style, { color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontWeight: '600' });
 		siFooter.appendChild(siSignUpLink);
 
 		// === VERIFY EMAIL PANEL (OTP after sign-up) ==========================
@@ -318,11 +320,11 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 		const veTitle = dom.append(verifyPanel, document.createElement('div'));
 		veTitle.textContent = localize('lucos.verify.title', "Check your email");
-		Object.assign(veTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground, #cccccc)', marginBottom: '4px' });
+		Object.assign(veTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground)', marginBottom: '4px' });
 
 		const veSubtitle = dom.append(verifyPanel, document.createElement('div'));
 		veSubtitle.textContent = localize('lucos.verify.subtitle', "Enter the 6-digit code we sent you.");
-		Object.assign(veSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)', marginBottom: '20px' });
+		Object.assign(veSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground)', marginBottom: '20px' });
 
 		const { input: veOtpInput } = makeInput(verifyPanel, localize('lucos.verify.code', "Verification code"), 'text', '123456', 'one-time-code');
 		veOtpInput.maxLength = 6;
@@ -341,17 +343,17 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		veResend.textContent = localize('lucos.verify.resend', "Resend code");
 		Object.assign(veResend.style, {
 			width: '100%', padding: '10px 0', borderRadius: '8px', cursor: 'pointer',
-			background: 'transparent', border: '1px solid var(--vscode-button-border, #3c3c3c)',
-			color: 'var(--vscode-foreground, #cccccc)', fontSize: '13px', fontFamily: 'inherit', marginBottom: '18px',
+			background: 'transparent', border: '1px solid var(--vscode-button-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)))',
+			color: 'var(--vscode-foreground)', fontSize: '13px', fontFamily: 'inherit', marginBottom: '18px',
 		});
 		verifyPanel.appendChild(veResend);
 
 		const veFooter = dom.append(verifyPanel, document.createElement('div'));
-		Object.assign(veFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground, #9d9d9d)' });
+		Object.assign(veFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground)' });
 		veFooter.appendChild(document.createTextNode(localize('lucos.verify.wrongEmail', "Wrong email? ")));
 		const veBackLink = document.createElement('span');
 		veBackLink.textContent = localize('lucos.verify.back', "Go back");
-		Object.assign(veBackLink.style, { color: 'var(--vscode-textLink-foreground, #06b6d4)', cursor: 'pointer', fontWeight: '600' });
+		Object.assign(veBackLink.style, { color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontWeight: '600' });
 		veFooter.appendChild(veBackLink);
 
 		let pendingVerifyEmail = '';
@@ -473,8 +475,10 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		siPasswordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { siBtn.click(); } });
 		veOtpInput.addEventListener('keydown', e => { if (e.key === 'Enter') { veBtn.click(); } });
 
-		this.logService.info('[LucosSignIn] overlay DOM appended to document.body');
-		mainWindow.document.body.appendChild(overlay);
+		// Mount inside the workbench container: the --vscode-* theme variables are defined
+		// on .monaco-workbench, so the overlay only follows light/dark themes from there.
+		this.layoutService.mainContainer.appendChild(overlay);
+		this.logService.info('[LucosSignIn] overlay DOM appended to workbench container');
 		return overlay;
 	}
 }

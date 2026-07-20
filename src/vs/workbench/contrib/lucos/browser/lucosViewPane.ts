@@ -31,6 +31,7 @@ import { ILucosMessage, ILucosSession, LucosMessageRole } from '../common/lucosC
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosChatRequest, ILucosChatRequestService } from '../common/lucosChatRequestService.js';
 import { windowChatHistory } from '../common/lucosChatHistory.js';
+import { resolveEmptyAssistantFallback } from '../common/lucosAssistantSummary.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 import { ILucosPatchProposal, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
@@ -1006,21 +1007,16 @@ export class LucosChatViewPane extends ViewPane {
 		}
 
 		const ui = this.getSessionUi(sessionId);
-		const patchSummary = ui.pendingPatch?.summary?.trim();
-		let text = completionSummary?.trim() ?? '';
-
-		if (patchSummary) {
-			text = patchSummary;
-		} else if (text && goal && text.toLowerCase() === goal.trim().toLowerCase()) {
-			// Daemon defaults summary to the user goal when the model never spoke — skip echo.
-			text = '';
-		}
-
-		if (!text) {
-			text = patchSummary
-				? localize('lucos.chat.patchOnly', "Review the proposed changes below.")
-				: localize('lucos.chat.taskComplete', "Task completed.");
-		}
+		const resolved = resolveEmptyAssistantFallback({
+			completionSummary,
+			goal,
+			pendingPatch: ui.pendingPatch,
+		});
+		const text =
+			resolved.kind === 'text' ? resolved.text
+				: resolved.kind === 'patchReview'
+					? localize('lucos.chat.patchOnly', "Review the proposed changes below.")
+					: localize('lucos.chat.noWrittenAnswer', "No written answer was returned. Check the activity timeline for tool results.");
 
 		this.conversationService.appendToMessage(messageId, text);
 	}
