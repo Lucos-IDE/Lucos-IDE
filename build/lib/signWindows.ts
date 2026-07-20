@@ -291,13 +291,16 @@ async function signFileWithPfx(filePath: string): Promise<void> {
 }
 
 /**
- * Walks `dir` recursively and signs every .exe file found.
+ * Walks `dir` and signs Lucos product `.exe` files only.
  *
- * Used in the pre-package codesign step to sign Electron binaries and
- * lucos-daemon.exe before InnoSetup packages them into the installer.
+ * Skips third-party binaries under node_modules / vendor trees — those burn
+ * DigiCert signature quota and often fail Authenticode (bad PE / wrong arch).
+ * InnoSetup still signs the installer via sign-lucos.ts.
  */
 export async function signDirectory(dir: string): Promise<void> {
-	for (const f of findExeFiles(dir)) {
+	const files = findProductExeFiles(dir);
+	console.log(`[sign-windows] Signing ${files.length} Lucos product exe(s) under ${dir}`);
+	for (const f of files) {
 		console.log(`[sign-windows] Signing ${f}`);
 		await signFile(f);
 	}
@@ -308,15 +311,41 @@ export function canSignWindows(): boolean {
 	return hasKeyLockerCredentials() || hasPfxCredentials();
 }
 
-function findExeFiles(dir: string): string[] {
+/**
+ * Product binaries we own / ship as Lucos:
+ * - root Electron app + helpers (Lucos.exe, Lucos*.exe at app root)
+ * - bundled lucos-daemon.exe
+ * - Inno updater tools under tools/
+ *
+ * Does not walk node_modules / extension vendor bins (bad PE formats and
+ * DigiCert signature-quota waste).
+ */
+function findProductExeFiles(root: string): string[] {
 	const results: string[] = [];
-	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-		const full = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
-			results.push(...findExeFiles(full));
-		} else if (/\.exe$/i.test(entry.name)) {
-			results.push(full);
+	const rootResolved = path.resolve(root);
+
+	const addIfExe = (filePath: string): void => {
+		if (fs.existsSync(filePath) && /\.exe$/i.test(filePath)) {
+			results.push(filePath);
+		}
+	};
+
+	for (const entry of fs.readdirSync(rootResolved, { withFileTypes: true })) {
+		if (entry.isFile() && /\.exe$/i.test(entry.name)) {
+			addIfExe(path.join(rootResolved, entry.name));
 		}
 	}
+
+	addIfExe(path.join(rootResolved, 'resources', 'app', 'resources', 'lucos-daemon.exe'));
+
+	const toolsDir = path.join(rootResolved, 'tools');
+	if (fs.existsSync(toolsDir)) {
+		for (const entry of fs.readdirSync(toolsDir, { withFileTypes: true })) {
+			if (entry.isFile()) {
+				addIfExe(path.join(toolsDir, entry.name));
+			}
+		}
+	}
+
 	return results;
 }
