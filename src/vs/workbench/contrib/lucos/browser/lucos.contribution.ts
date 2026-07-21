@@ -8,7 +8,9 @@ import { Codicon } from '../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
-import { registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { registerAction2, Action2, MenuId } from '../../../../platform/actions/common/actions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { EditorExtensions } from '../../../common/editor.js';
@@ -16,7 +18,7 @@ import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js'
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Extensions as ViewContainerExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainer, ViewContainerLocation } from '../../../common/views.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
-import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
+import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution } from '../../../common/contributions.js';
 import { LucosSettingId } from '../common/lucosConfiguration.js';
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
@@ -27,7 +29,7 @@ import { LucosConversationService } from './lucosConversationService.js';
 import { LucosChatRequestService } from './lucosChatRequestService.js';
 import { LucosAuthService } from './lucosAuthService.js';
 import { LucosIndexService } from './lucosIndexService.js';
-import { LucosChatViewPane } from './lucosViewPane.js';
+import { LucosChatViewPane, LucosIsSignedInContext } from './lucosViewPane.js';
 import { LucosStatusBarContribution } from './lucosStatusBar.js';
 import { LucosAuthRestoreContribution, LucosLoginAction, LucosLogoutAction, LucosResetAuthAction, LucosGoogleLoginAction } from './lucosLoginActions.js';
 import { LucosCmdKAction, LucosExplainAction, LucosGenerateTestsAction, LucosIndexWorkspaceAction, LucosRefactorAction, LucosReviewChangesAction, LucosSelectCustomizationAction } from './lucosEditorActions.js';
@@ -36,14 +38,15 @@ import { LucosNotificationsContribution } from './lucosNotifications.js';
 // import { LucosSignInOnStartupContribution } from './lucosFirstRunContribution.js';
 import { LucosSignInEditorInput } from './lucosSignInEditorInput.js';
 import { LucosSignInEditorPane } from './lucosSignInEditorPane.js';
-import { LucosSignInOverlayContribution } from './lucosSignInOverlay.js';
+import { LucosSignInOverlayContribution, LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID } from './lucosSignInOverlay.js';
 import { LucosWorkspaceIndexWatcher } from './lucosWorkspaceIndexWatcher.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 import { LucosAuthModeService } from './lucosAuthModeService.js';
 import { LucosAuthCallbackHandler } from './lucosAuthCallbackHandler.js';
 import { LucosAccountSettingsContribution } from './lucosAccountSettings.js';
+import { Disposable } from '../../../../base/common/lifecycle.js';
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 
-//#region Services
 // The daemon service is bound per-platform: desktop -> real gRPC client
 // (electron-browser/lucos.contribution.ts); web -> stub (browser/lucos.stub.contribution.ts).
 // Conversation store (TW-160).
@@ -203,6 +206,63 @@ registerWorkbenchContribution2(LucosAuthCallbackHandler.ID, LucosAuthCallbackHan
 // Runs after AfterRestored so LucosAuthRestoreContribution has already tried to resume a
 // stored session - returning signed-in users are skipped immediately.
 registerWorkbenchContribution2(LucosSignInOverlayContribution.ID, LucosSignInOverlayContribution, WorkbenchPhase.AfterRestored);
+//#endregion
+
+//#region Global lucosIsSignedIn context key (drives title-bar Sign In / Sign Out buttons)
+class LucosAuthContextKeyContribution extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.lucosAuthContextKey';
+	constructor(
+		@ILucosAuthService lucosAuthService: ILucosAuthService,
+		@IContextKeyService contextKeyService: IContextKeyService,
+	) {
+		super();
+		const lucosIsSignedIn = LucosIsSignedInContext.bindTo(contextKeyService);
+		lucosIsSignedIn.set(lucosAuthService.isSignedIn);
+		void lucosAuthService.restorePromise.then(() => lucosIsSignedIn.set(lucosAuthService.isSignedIn));
+		this._register(lucosAuthService.onDidChangeSignInState(signedIn => lucosIsSignedIn.set(signedIn)));
+	}
+}
+registerWorkbenchContribution2(LucosAuthContextKeyContribution.ID, LucosAuthContextKeyContribution, WorkbenchPhase.BlockRestore);
+//#endregion
+
+//#region Workbench title-bar Sign In / Sign Out (MenuId.TitleBar)
+// These appear in the standard VS Code workbench title bar (right-hand global toolbar).
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'lucos.workbench.signIn',
+			title: localize2('lucos.workbenchTitle.signIn', "Sign In"),
+			icon: Codicon.signIn,
+			menu: {
+				id: MenuId.TitleBar,
+				group: 'navigation',
+				order: 0,
+				when: LucosIsSignedInContext.toNegated(),
+			},
+		});
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(ICommandService).executeCommand(LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID);
+	}
+});
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'lucos.workbench.signOut',
+			title: localize2('lucos.workbenchTitle.signOut', "Sign Out"),
+			icon: Codicon.signOut,
+			menu: {
+				id: MenuId.TitleBar,
+				group: 'navigation',
+				order: 0,
+				when: LucosIsSignedInContext,
+			},
+		});
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(ILucosAuthService).logout();
+	}
+});
 //#endregion
 
 //#region Workspace-open -> auto-index (TW-178 / TW-220)

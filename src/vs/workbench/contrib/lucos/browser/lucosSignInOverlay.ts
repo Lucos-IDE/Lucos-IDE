@@ -6,10 +6,14 @@
 import * as dom from '../../../../base/browser/dom.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
+import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
+
+/** Command that can be called from anywhere to open the Lucos sign-in overlay. */
+export const LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID = 'lucos.showSignInOverlay';
 
 /**
  * Cursor-like full-window sign-in overlay.  Covers the entire workbench with a branded
@@ -30,6 +34,9 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		super();
 		this.logService.info('[LucosSignIn] overlay contribution created, waiting for session restore…');
 		this.overlay = this.buildOverlay(); // starts hidden
+		this._register(CommandsRegistry.registerCommand(LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID, () => {
+			this.setVisible(true);
+		}));
 		// Wait for session restore to complete before deciding to show — prevents flicker
 		// where a returning user's JWT is in the keychain but restore() hasn't resolved yet.
 		void authService.restorePromise.then(() => {
