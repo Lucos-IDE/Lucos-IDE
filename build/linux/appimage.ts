@@ -155,7 +155,7 @@ function writeDesktopEntry(appDir: string): void {
 	const lines = [
 		'[Desktop Entry]',
 		`Name=${product.nameLong}`,
-		'Comment=Code Editing. Redefined.',
+		'Comment=AI-native Code Editor',
 		'GenericName=Text Editor',
 		`Exec=${appId} %F`,
 		`Icon=${appId}`,

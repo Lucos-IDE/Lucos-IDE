@@ -16,13 +16,14 @@ import { DisposableStore, IDisposable, toDisposable } from '../../../../base/com
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IContextMenuService, IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IViewPaneOptions, ViewPane } from '../../../browser/parts/views/viewPane.js';
@@ -41,6 +42,10 @@ import { LucosActivityTimeline } from './lucosActivityTimeline.js';
 import { ILucosContextMention, ILucosStaticContextOption, LucosContextPicker, LucosStaticContextKind } from './lucosContextPicker.js';
 import { LucosPatchReview } from './lucosPatchReview.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
+import { LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID } from './lucosSignInOverlay.js';
+
+/** Context key: true when the user is signed in to Lucos. */
+export const LucosIsSignedInContext = new RawContextKey<boolean>('lucosIsSignedIn', false);
 
 interface ITurnElements {
 	readonly turn: HTMLElement;
@@ -153,6 +158,7 @@ export class LucosChatViewPane extends ViewPane {
 		@ILucosAuthService private readonly lucosAuthService: ILucosAuthService,
 		@ILucosChatRequestService private readonly chatRequestService: ILucosChatRequestService,
 		@ILucosAuthModeService private readonly lucosAuthModeService: ILucosAuthModeService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -169,6 +175,12 @@ export class LucosChatViewPane extends ViewPane {
 		this._register(this.conversationService.onDidChangeActiveSession(() => this.onActiveSessionChanged()));
 		this._register(this.conversationService.onDidChangeSessions(() => this.rebuildSessionTabs()));
 		this._register(this.chatRequestService.onDidRequest(request => this.handleExternalRequest(request)));
+
+		// Bind the sign-in context key so ViewTitle actions show Sign In / Sign Out.
+		const lucosIsSignedIn = LucosIsSignedInContext.bindTo(this.scopedContextKeyService);
+		lucosIsSignedIn.set(this.lucosAuthService.isSignedIn);
+		void this.lucosAuthService.restorePromise.then(() => lucosIsSignedIn.set(this.lucosAuthService.isSignedIn));
+		this._register(this.lucosAuthService.onDidChangeSignInState(signedIn => lucosIsSignedIn.set(signedIn)));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(LucosSettingId.AgentModel)) {
 				this.updateModelButton();
@@ -646,7 +658,7 @@ export class LucosChatViewPane extends ViewPane {
 		this.notificationService.prompt(
 			Severity.Warning,
 			localize('lucos.auth.required', "Sign in to use Lucos AI."),
-			[{ label: localize('lucos.auth.signIn', "Sign In"), run: () => { void this.lucosAuthService.login(); } }],
+			[{ label: localize('lucos.auth.signIn', "Sign In"), run: () => { void this.commandService.executeCommand(LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID); } }],
 		);
 	}
 

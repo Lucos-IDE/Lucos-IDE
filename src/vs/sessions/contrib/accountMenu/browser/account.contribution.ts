@@ -40,6 +40,10 @@ import { IAuthenticationUsageService } from '../../../../workbench/services/auth
 import { IAuthenticationService } from '../../../../workbench/services/authentication/common/authentication.js';
 import { IChatDashboardService } from '../../../browser/chatDashboardService.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID } from '../../../../workbench/contrib/lucos/browser/lucosSignInOverlay.js';
+import { LucosIsSignedInContext } from '../../../../workbench/contrib/lucos/browser/lucosViewPane.js';
+import { ILucosAuthService } from '../../../../workbench/contrib/lucos/common/lucosAuthService.js';
 
 // --- Account Menu Items --- //
 const AccountMenu = Menus.AccountMenu;
@@ -61,6 +65,53 @@ registerUpdateTitleBarMenuPlacement(Menus.TitleBarSessionMenu, {
 	when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), SessionsWelcomeVisibleContext.toNegated()),
 	group: 'navigation',
 	order: -1,
+});
+
+// Lucos Sign In — shown in the sessions title bar to the right of the Update button
+// when the user is not authenticated with Lucos.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'lucos.titleBar.signIn',
+			title: localize2('lucos.titleBar.signIn', "Sign In"),
+			icon: Codicon.signIn,
+			menu: {
+				id: Menus.TitleBarSessionMenu,
+				group: 'navigation',
+				order: 0,
+				when: ContextKeyExpr.and(
+					IsAuxiliaryWindowContext.toNegated(),
+					LucosIsSignedInContext.toNegated(),
+				),
+			},
+		});
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(ICommandService).executeCommand(LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID);
+	}
+});
+
+// Lucos Sign Out — shown when the user is authenticated with Lucos.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'lucos.titleBar.signOut',
+			title: localize2('lucos.titleBar.signOut', "Sign Out"),
+			icon: Codicon.signOut,
+			menu: {
+				id: Menus.TitleBarSessionMenu,
+				group: 'navigation',
+				order: 0,
+				when: ContextKeyExpr.and(
+					IsAuxiliaryWindowContext.toNegated(),
+					LucosIsSignedInContext,
+				),
+			},
+		});
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(ILucosAuthService).logout();
+	}
 });
 
 // Sign In (shown when signed out)
@@ -179,6 +230,7 @@ class TitleBarAccountWidget extends BaseActionViewItem {
 		@IHoverService private readonly hoverService: IHoverService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IChatEntitlementService private readonly chatEntitlementService: ChatEntitlementService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(undefined, action, options);
 		this.lastState = getAccountTitleBarState({
@@ -222,6 +274,12 @@ class TitleBarAccountWidget extends BaseActionViewItem {
 
 	override onClick(): void {
 		if (!this.container) {
+			return;
+		}
+
+		// When no account is loaded (the button shows "Sign In"), open the Lucos sign-in overlay.
+		if (!this.accountName && !this.isAccountLoading) {
+			void this.commandService.executeCommand(LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID);
 			return;
 		}
 
@@ -631,6 +689,24 @@ class AccountWidgetContribution extends Disposable implements IWorkbenchContribu
 }
 
 registerWorkbenchContribution2(AccountWidgetContribution.ID, AccountWidgetContribution, WorkbenchPhase.BlockRestore);
+
+// Bind LucosIsSignedInContext to the sessions window's global IContextKeyService so that
+// the Sign In / Sign Out title-bar menu items (Menus.TitleBarSessionMenu) can evaluate
+// their `when` clauses correctly.
+class LucosSessionsAuthContextKeyContribution extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'sessions.contrib.lucosAuthContextKey';
+	constructor(
+		@ILucosAuthService private readonly lucosAuthService: ILucosAuthService,
+		@IContextKeyService contextKeyService: IContextKeyService,
+	) {
+		super();
+		const lucosIsSignedIn = LucosIsSignedInContext.bindTo(contextKeyService);
+		lucosIsSignedIn.set(lucosAuthService.isSignedIn);
+		void lucosAuthService.restorePromise.then(() => lucosIsSignedIn.set(lucosAuthService.isSignedIn));
+		this._register(lucosAuthService.onDidChangeSignInState(signedIn => lucosIsSignedIn.set(signedIn)));
+	}
+}
+registerWorkbenchContribution2(LucosSessionsAuthContextKeyContribution.ID, LucosSessionsAuthContextKeyContribution, WorkbenchPhase.BlockRestore);
 
 // --- Chat Dashboard Service (real implementation for mobile account sheet) --- //
 
