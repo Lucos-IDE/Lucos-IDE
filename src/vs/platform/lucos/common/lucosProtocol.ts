@@ -149,6 +149,19 @@ export interface ILucosApplyPatchResult {
 	readonly filesChanged: readonly string[];
 }
 
+/**
+ * Payload of a `permission.requested` task event — IDE prompts for approve/deny
+ * before the daemon runs a risky tool (e.g. `run_command`). TW-175 Phase 2b.
+ */
+export interface ILucosPermissionRequest {
+	readonly taskId: string;
+	readonly toolCallId: string;
+	readonly toolName: string;
+	readonly command?: string;
+	readonly cwd?: string;
+	readonly reason?: string;
+}
+
 /** A repo/user skill (`SkillEntry`) — TW-184. */
 export interface ILucosSkill {
 	readonly name: string;

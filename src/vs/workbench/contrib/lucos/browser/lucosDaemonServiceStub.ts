@@ -60,6 +60,10 @@ export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonSe
 		// no-op in the stub
 	}
 
+	async respondToPermission(): Promise<void> {
+		// no-op in the stub — real daemon blocks the tool until this RPC resolves
+	}
+
 	async listCustomizations(): Promise<ILucosCustomizations> {
 		return { skills: [], agents: [] };
 	}

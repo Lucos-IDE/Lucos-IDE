@@ -74,4 +74,10 @@ suite('LucosDaemonServiceStub', () => {
 		assert.strictEqual(kinds[kinds.length - 1], LucosTaskEventKind.IndexCompleted);
 		assert.ok(kinds.includes(LucosTaskEventKind.IndexProgress), 'expected at least one index.progress event');
 	});
+
+	test('respondToPermission resolves without error in the stub', async () => {
+		const service = disposables.add(new LucosDaemonServiceStub());
+		await service.respondToPermission('task-1', 'tool-1', true);
+		await service.respondToPermission('task-1', 'tool-2', false, 'User denied');
+	});
 });

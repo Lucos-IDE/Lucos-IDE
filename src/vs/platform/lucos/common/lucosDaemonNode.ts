@@ -37,6 +37,9 @@ export interface ILucosDaemonNodeService {
 	rejectPatch(patchId: string): Promise<void>;
 	//#endregion
 
+	/** Resolve a `permission.requested` prompt (TW-175 Phase 2b). */
+	respondToPermission(taskId: string, toolCallId: string, approved: boolean, denyReason?: string): Promise<void>;
+
 	/** Skills/agents discovered locally (TW-184). */
 	listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations>;
 

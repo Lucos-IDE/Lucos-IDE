@@ -34,10 +34,11 @@ import { windowChatHistory } from '../common/lucosChatHistory.js';
 import { resolveEmptyAssistantFallback } from '../common/lucosAssistantSummary.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
-import { ILucosPatchProposal, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
-import { taskPayloadString } from '../../../../platform/lucos/common/lucosTaskPayload.js';
+import { ILucosPatchProposal, ILucosPermissionRequest, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { parsePermissionRequest, taskPayloadString } from '../../../../platform/lucos/common/lucosTaskPayload.js';
 import { LucosSettingId } from '../common/lucosConfiguration.js';
 import { LucosActivityTimeline } from './lucosActivityTimeline.js';
+import { LucosCommandApproval } from './lucosCommandApproval.js';
 import { ILucosContextMention, ILucosStaticContextOption, LucosContextPicker, LucosStaticContextKind } from './lucosContextPicker.js';
 import { LucosPatchReview } from './lucosPatchReview.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
@@ -51,7 +52,9 @@ interface ITurnElements {
 
 interface ISessionUiState {
 	readonly shownPatchIds: Set<string>;
+	readonly shownPermissionIds: Set<string>;
 	pendingPatch?: ILucosPatchProposal;
+	pendingPermission?: ILucosPermissionRequest;
 	streamingAssistantId?: string;
 }
 
@@ -62,6 +65,15 @@ const LUCOS_MODELS = [
 	{ id: 'claude-opus-4-8', label: 'claude-opus-4-8' },
 	{ id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
 	{ id: 'claude-haiku-4-5', label: 'claude-haiku-4-5' },
+	{ id: 'gpt-4o', label: 'gpt-4o' },
+	{ id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+	{ id: 'gpt-5.4', label: 'gpt-5.4' },
+	{ id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
+	{ id: 'o1', label: 'o1' },
+	{ id: 'gemini-2.5-pro', label: 'gemini-2.5-pro' },
+	{ id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+	{ id: 'deepseek-chat', label: 'deepseek-chat' },
+	{ id: 'deepseek-reasoner', label: 'deepseek-reasoner' },
 ] as const;
 
 type LucosComposerMode = 'ask' | 'agent';
@@ -111,6 +123,7 @@ export class LucosChatViewPane extends ViewPane {
 
 	private contextPicker!: LucosContextPicker;
 	private patchReview!: LucosPatchReview;
+	private commandApproval!: LucosCommandApproval;
 	private readonly mentions: ILucosContextMention[] = [];
 	private readonly sessionUi = new Map<string, ISessionUiState>();
 
@@ -133,6 +146,7 @@ export class LucosChatViewPane extends ViewPane {
 	/** Per-session cancel tokens so background tabs can keep streaming. */
 	private readonly streamTokens = new Map<string, CancellationTokenSource>();
 	private activePatchContainer: HTMLElement | undefined;
+	private activeCommandApprovalContainer: HTMLElement | undefined;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -217,6 +231,7 @@ export class LucosChatViewPane extends ViewPane {
 		this.timeline = this._register(new LucosActivityTimeline());
 		this.contextPicker = this.instantiationService.createInstance(LucosContextPicker);
 		this.patchReview = this._register(this.instantiationService.createInstance(LucosPatchReview));
+		this.commandApproval = this._register(this.instantiationService.createInstance(LucosCommandApproval));
 
 		// Messages.
 		this.messagesContainer = dom.append(container, dom.$('.lucos-chat-messages'));
@@ -433,6 +448,7 @@ export class LucosChatViewPane extends ViewPane {
 		this.timeline.unmount();
 		this.timeline.clear();
 		this.activePatchContainer = undefined;
+		this.activeCommandApprovalContainer = undefined;
 
 		for (const disposable of this.markdownDisposables.values()) {
 			disposable.dispose();
@@ -472,12 +488,20 @@ export class LucosChatViewPane extends ViewPane {
 			});
 			this.activePatchContainer.classList.add('visible');
 		}
+		if (ui?.pendingPermission && this.activeCommandApprovalContainer) {
+			this.commandApproval.render(this.activeCommandApprovalContainer, ui.pendingPermission, () => {
+				const state = this.getSessionUi(sessionId);
+				state.pendingPermission = undefined;
+				this.clearCommandApproval();
+			});
+			this.activeCommandApprovalContainer.classList.add('visible');
+		}
 	}
 
 	private getSessionUi(sessionId: string): ISessionUiState {
 		let state = this.sessionUi.get(sessionId);
 		if (!state) {
-			state = { shownPatchIds: new Set<string>() };
+			state = { shownPatchIds: new Set<string>(), shownPermissionIds: new Set<string>() };
 			this.sessionUi.set(sessionId, state);
 		}
 		return state;
@@ -516,8 +540,11 @@ export class LucosChatViewPane extends ViewPane {
 		if (isActive()) {
 			this.timeline.clear();
 			this.clearPatchReview();
+			this.clearCommandApproval();
 		}
 		ui.shownPatchIds.clear();
+		ui.shownPermissionIds.clear();
+		ui.pendingPermission = undefined;
 		ui.pendingPatch = undefined;
 
 		// Snapshot prior turns before appending the new user/assistant messages.
@@ -597,6 +624,13 @@ export class LucosChatViewPane extends ViewPane {
 						}
 						break;
 					}
+					case LucosTaskEventKind.PermissionRequested: {
+						const request = parsePermissionRequest(event.taskId, event.payload);
+						if (request) {
+							this.showPermission(sessionId, request);
+						}
+						break;
+					}
 					case LucosTaskEventKind.TaskCompleted: {
 						completionSummary = taskPayloadString(event.payload, 'summary', 'summary') ?? undefined;
 						if (isActive()) {
@@ -640,6 +674,7 @@ export class LucosChatViewPane extends ViewPane {
 		}
 		this.timeline.mountTo(turn.footer);
 		this.activePatchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
+		this.activeCommandApprovalContainer = dom.append(turn.footer, dom.$('.lucos-chat-command-approval'));
 	}
 
 	private promptSignIn(): void {
@@ -994,6 +1029,29 @@ export class LucosChatViewPane extends ViewPane {
 		this.scrollToBottom();
 	}
 
+	private showPermission(sessionId: string, request: ILucosPermissionRequest): void {
+		const ui = this.getSessionUi(sessionId);
+		if (ui.shownPermissionIds.has(request.toolCallId)) {
+			return;
+		}
+		ui.shownPermissionIds.add(request.toolCallId);
+		ui.pendingPermission = request;
+
+		if (this.conversationService.activeSession.id !== sessionId) {
+			return;
+		}
+		const container = this.activeCommandApprovalContainer;
+		if (!container) {
+			return;
+		}
+		this.commandApproval.render(container, request, () => {
+			ui.pendingPermission = undefined;
+			this.clearCommandApproval();
+		});
+		container.classList.add('visible');
+		this.scrollToBottom();
+	}
+
 	/** When the model only used tools (no model.delta), surface task/patch summary in the bubble. */
 	private ensureAssistantSummary(
 		messageId: string,
@@ -1035,6 +1093,13 @@ export class LucosChatViewPane extends ViewPane {
 		if (this.activePatchContainer) {
 			dom.clearNode(this.activePatchContainer);
 			this.activePatchContainer.classList.remove('visible');
+		}
+	}
+
+	private clearCommandApproval(): void {
+		if (this.activeCommandApprovalContainer) {
+			dom.clearNode(this.activeCommandApprovalContainer);
+			this.activeCommandApprovalContainer.classList.remove('visible');
 		}
 	}
 

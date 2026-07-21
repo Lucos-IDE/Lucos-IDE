@@ -56,6 +56,12 @@ export interface ILucosDaemonService {
 	rejectPatch(patchId: string): Promise<void>;
 	//#endregion
 
+	/**
+	 * Resolve a `permission.requested` prompt (TW-175 Phase 2b).
+	 * Approving unblocks the daemon tool; denying returns a non-fatal observation.
+	 */
+	respondToPermission(taskId: string, toolCallId: string, approved: boolean, denyReason?: string): Promise<void>;
+
 	/** List skills/agents the daemon discovered in the workspace (TW-184). */
 	listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations>;
 

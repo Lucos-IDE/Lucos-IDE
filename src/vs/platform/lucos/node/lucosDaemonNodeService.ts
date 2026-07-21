@@ -136,6 +136,15 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		await this.client.rejectPatch({ patchId });
 	}
 
+	async respondToPermission(taskId: string, toolCallId: string, approved: boolean, denyReason?: string): Promise<void> {
+		await this.client.respondToPermission({
+			taskId,
+			toolCallId,
+			approved,
+			denyReason: denyReason ?? '',
+		});
+	}
+
 	async listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations> {
 		try {
 			return mapCustomizations(await this.client.listCustomizations({ workspaceRoot }));

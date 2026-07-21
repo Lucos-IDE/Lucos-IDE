@@ -141,6 +141,12 @@
 }
 
 /* Message list */
+.lucos-chat-messages,
+.lucos-turn-body {
+	user-select: text;
+	-webkit-user-select: text;
+}
+
 .lucos-chat-messages {
 	flex: 1;
 	overflow-y: auto;
@@ -399,6 +405,89 @@
 	background: transparent;
 	color: var(--vscode-foreground);
 	border-color: var(--vscode-panel-border);
+}
+
+/* Command approval slot (TW-175 Phase 2b) */
+.lucos-chat-command-approval {
+	display: none;
+}
+
+.lucos-chat-command-approval.visible {
+	display: block;
+}
+
+.lucos-command-card {
+	margin: 8px 0;
+	padding: 10px 12px;
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 6px;
+	background: var(--vscode-editor-background);
+}
+
+.lucos-command-title {
+	font-weight: 600;
+	margin-bottom: 4px;
+	font-size: 13px;
+}
+
+.lucos-command-tool {
+	font-size: 11px;
+	opacity: 0.8;
+	margin-bottom: 6px;
+	font-family: var(--monaco-monospace-font, monospace);
+}
+
+.lucos-command-preview {
+	margin: 0 0 6px;
+	padding: 8px 10px;
+	border-radius: 4px;
+	background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+	border: 1px solid var(--vscode-panel-border);
+	font-family: var(--monaco-monospace-font, monospace);
+	font-size: 12px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 160px;
+	overflow: auto;
+}
+
+.lucos-command-cwd,
+.lucos-command-reason {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	margin: 2px 0;
+}
+
+.lucos-command-actions {
+	margin-top: 8px;
+	display: flex;
+	gap: 8px;
+}
+
+.lucos-command-approve,
+.lucos-command-deny {
+	padding: 4px 12px;
+	border-radius: 4px;
+	border: 1px solid var(--vscode-button-border, transparent);
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.lucos-command-approve {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+}
+
+.lucos-command-deny {
+	background: transparent;
+	color: var(--vscode-foreground);
+	border-color: var(--vscode-panel-border);
+}
+
+.lucos-command-status {
+	margin-top: 4px;
+	opacity: 0.8;
+	font-size: 12px;
 }
 
 /* Composer — single card (Cursor-like), no nested input chrome */
