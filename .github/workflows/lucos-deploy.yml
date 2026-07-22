@@ -33,6 +33,10 @@
 #  Both envs (configure in repo secrets or per-environment secrets):
 #    LUCOS_SENTRY_DSN   (optional)
 #    LUCOS_DEPLOY_TOKEN (optional -- used by the deploy step)
+#    GCP_RELEASES_SA_KEY  JSON key for lucos-releases-ci service account
+#  Repository variables:
+#    GCP_PROJECT_ID       e.g. vertexai-459806
+#    GCS_RELEASES_BUCKET  e.g. lucos-releases-staging (prod may use lucos-releases later)
 
 name: Lucos Deploy (staging / production)
 
@@ -64,22 +68,31 @@ jobs:
       update_url:  ${{ steps.pick.outputs.update_url }}
       tag_name:    ${{ steps.pick.outputs.tag_name }}
       is_prod:     ${{ steps.pick.outputs.is_prod }}
+      gcs_channel: ${{ steps.pick.outputs.gcs_channel }}
+      release_version: ${{ steps.pick.outputs.release_version }}
     steps:
       - name: Pick environment
         id: pick
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
             echo "environment=production"  >> "$GITHUB_OUTPUT"
             echo "quality=stable"          >> "$GITHUB_OUTPUT"
             echo "update_url=https://update.lucos.app" >> "$GITHUB_OUTPUT"
-            echo "tag_name=${GITHUB_REF#refs/tags/}"   >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG"           >> "$GITHUB_OUTPUT"
             echo "is_prod=true"            >> "$GITHUB_OUTPUT"
+            echo "gcs_channel=stable"      >> "$GITHUB_OUTPUT"
+            echo "release_version=$VERSION" >> "$GITHUB_OUTPUT"
           else
+            SHORT_SHA="${GITHUB_SHA:0:7}"
             echo "environment=staging"     >> "$GITHUB_OUTPUT"
             echo "quality=insider"         >> "$GITHUB_OUTPUT"
             echo "update_url=https://update-staging.lucos.app" >> "$GITHUB_OUTPUT"
             echo "tag_name="               >> "$GITHUB_OUTPUT"
             echo "is_prod=false"           >> "$GITHUB_OUTPUT"
+            echo "gcs_channel=insider"     >> "$GITHUB_OUTPUT"
+            echo "release_version=${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           fi
 
   # ── 1. Compile & hygiene ──────────────────────────────────────────────────
@@ -794,8 +807,13 @@ jobs:
       - build-win32-x64
       - build-linux-x64
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     environment: ${{ needs.resolve-env.outputs.environment }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -806,33 +824,61 @@ jobs:
       - name: List artifacts
         run: ls -lh dist/
 
-      # ---------------------------------------------------------------------------
-      # Add your actual deploy steps here, for example:
-      #
-      #   - name: Upload to S3 / GCS / R2
-      #     run: aws s3 sync dist/ s3://releases.lucos.app/${{ needs.resolve-env.outputs.environment }}/
-      #
-      #   - name: Publish GitHub Release (production only)
-      #     if: needs.resolve-env.outputs.is_prod == 'true'
-      #     uses: softprops/action-gh-release@v2
-      #     with:
-      #       files: dist/*
-      #       tag_name: ${{ needs.resolve-env.outputs.tag_name }}
-      #
-      #   - name: Notify Slack
-      #     run: ...
-      # ---------------------------------------------------------------------------
+      - name: Authenticate to Google Cloud
+        if: vars.GCS_RELEASES_BUCKET != ''
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_RELEASES_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        if: vars.GCS_RELEASES_BUCKET != ''
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Publish releases to GCS
+        if: vars.GCS_RELEASES_BUCKET != ''
+        env:
+          DIST_DIR: dist
+          GCS_BUCKET: ${{ vars.GCS_RELEASES_BUCKET }}
+          GCS_CHANNEL: ${{ needs.resolve-env.outputs.gcs_channel }}
+          RELEASE_VERSION: ${{ needs.resolve-env.outputs.release_version }}
+          QUALITY: ${{ needs.resolve-env.outputs.quality }}
+          GIT_REF: ${{ github.sha }}
+        run: |
+          chmod +x .github/scripts/publish-releases-gcs.sh
+          .github/scripts/publish-releases-gcs.sh
+
+      - name: Publish GitHub Release (production only)
+        if: needs.resolve-env.outputs.is_prod == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          tag_name: ${{ needs.resolve-env.outputs.tag_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summarize deployment
         run: |
           ENV="${{ needs.resolve-env.outputs.environment }}"
           QUALITY="${{ needs.resolve-env.outputs.quality }}"
+          CHANNEL="${{ needs.resolve-env.outputs.gcs_channel }}"
+          VERSION="${{ needs.resolve-env.outputs.release_version }}"
+          BUCKET="${{ vars.GCS_RELEASES_BUCKET }}"
+          MANIFEST=""
+          if [[ -n "$BUCKET" ]]; then
+            MANIFEST="https://storage.googleapis.com/${BUCKET}/releases/${CHANNEL}.json"
+          fi
           echo "### Lucos Deploy Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Environment | \`$ENV\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Quality | \`$QUALITY\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Release version | \`$VERSION\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GCS channel | \`$CHANNEL\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Releases manifest | \`${MANIFEST:-skipped}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Update URL | \`${{ needs.resolve-env.outputs.update_url }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Ref | \`$GITHUB_REF\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Artifacts |" >> "$GITHUB_STEP_SUMMARY"
