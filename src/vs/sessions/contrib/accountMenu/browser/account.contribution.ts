@@ -696,7 +696,7 @@ registerWorkbenchContribution2(AccountWidgetContribution.ID, AccountWidgetContri
 class LucosSessionsAuthContextKeyContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'sessions.contrib.lucosAuthContextKey';
 	constructor(
-		@ILucosAuthService private readonly lucosAuthService: ILucosAuthService,
+		@ILucosAuthService lucosAuthService: ILucosAuthService,
 		@IContextKeyService contextKeyService: IContextKeyService,
 	) {
 		super();
