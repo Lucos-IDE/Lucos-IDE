@@ -3,8 +3,13 @@
 # Triggers
 # ────────────────────────────────────────────────────────────────────────────
 #  pull_request → main / release/*  : compile + unit tests  (fast gate)
-#  push → lucos-prod / v* tags       : light compile gate, then platform builds
-#                                      (tags also codesign/notarize when secrets exist)
+#  push → lucos-prod                 : platform builds (unsigned / ad-hoc macOS)
+#                                      + optional GCS insider publish
+#  push → v* tags                    : signed Apple + Windows builds
+#                                      + GCS stable publish + GitHub Release
+#
+# This is the canonical Lucos shipping workflow. Do not also run lucos-deploy.yml
+# on the same tags (that workflow is disabled for Lucos releases).
 #
 # Secrets required for signed release builds (tag pushes)
 # ────────────────────────────────────────────────────────────────────────────
@@ -28,6 +33,11 @@
 #      OR
 #    LUCOS_DAEMON_SSH_KEY                 read-only deploy key private key for that repo
 #    (GITHUB_TOKEN cannot checkout sibling private repos — API returns Not Found)
+#  GCS public downloads (Path A — storage.googleapis.com):
+#    GCP_RELEASES_SA_KEY                  JSON key for lucos-releases-ci service account
+#  Repository variables:
+#    GCP_PROJECT_ID                       e.g. vertexai-459806
+#    GCS_RELEASES_BUCKET                  e.g. lucos-releases-staging
 
 name: Lucos Release CI
 
@@ -43,7 +53,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   # Use 'stable' so create-dmg.ts finds dmg-background-stable.tiff.
@@ -765,6 +775,7 @@ jobs:
 
       - name: Prepare DigiCert KeyLocker client certificate
         id: digicert-prep
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
@@ -789,7 +800,7 @@ jobs:
           Write-Output "enabled=true" >> $env:GITHUB_OUTPUT
 
       - name: Setup DigiCert KeyLocker client tools
-        if: steps.digicert-prep.outputs.enabled == 'true'
+        if: startsWith(github.ref, 'refs/tags/') && steps.digicert-prep.outputs.enabled == 'true'
         uses: digicert/code-signing-software-trust-action@v1
         with:
           # Need KSP + smctl for Authenticode via signtool (InnoSetup .e32.tmp / .exe).
@@ -802,7 +813,7 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
 
       - name: DigiCert KeyLocker healthcheck
-        if: steps.digicert-prep.outputs.enabled == 'true'
+        if: startsWith(github.ref, 'refs/tags/') && steps.digicert-prep.outputs.enabled == 'true'
         shell: pwsh
         env:
           SM_HOST: ${{ env.SM_HOST }}
@@ -818,6 +829,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "smctl keypair list failed" }
 
       - name: Sign packaged Windows binaries (KeyLocker or PFX)
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -841,11 +853,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Windows system-setup installer
-        # Pass --sign-lucos when KeyLocker or PFX credentials are present.
+        # Tags only: pass --sign-lucos when KeyLocker or PFX credentials are present.
         shell: pwsh
         run: |
-          $hasKeyLocker = -not [string]::IsNullOrEmpty($env:SM_API_KEY) -and (Test-Path -LiteralPath $env:SM_CLIENT_CERT_FILE -ErrorAction SilentlyContinue)
-          $hasPfx = -not [string]::IsNullOrEmpty($env:WINDOWS_PFX_DATA)
+          $isTag = $env:GITHUB_REF -like 'refs/tags/*'
+          $hasKeyLocker = $isTag -and -not [string]::IsNullOrEmpty($env:SM_API_KEY) -and (Test-Path -LiteralPath $env:SM_CLIENT_CERT_FILE -ErrorAction SilentlyContinue)
+          $hasPfx = $isTag -and -not [string]::IsNullOrEmpty($env:WINDOWS_PFX_DATA)
           if ($hasKeyLocker -or $hasPfx) {
             npm run gulp lucos-win32-x64-system-setup -- --sign-lucos
           } else {
@@ -1152,3 +1165,110 @@ jobs:
           name: logs-smoke-darwin-arm64-${{ github.run_attempt }}
           path: .build/logs
           if-no-files-found: ignore
+
+  # ── 8. Publish to GCS (+ GitHub Release on tags) ────────────────────────────
+  # Tags → channel=stable (signed public downloads)
+  # lucos-prod push → channel=insider (unsigned CI builds, optional)
+  publish-releases:
+    name: Publish releases (GCS)
+    needs:
+      - build-darwin-arm64
+      - build-darwin-x64
+      - build-win32-x64
+      - build-linux-x64
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/lucos-prod')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve channel & version
+        id: meta
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+            echo "quality=stable" >> "$GITHUB_OUTPUT"
+          else
+            SHORT_SHA="${GITHUB_SHA:0:7}"
+            echo "channel=insider" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "tag_name=" >> "$GITHUB_OUTPUT"
+            echo "quality=insider" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lucos-*
+          merge-multiple: true
+          path: dist/
+
+      - name: List artifacts
+        run: |
+          # Drop smoke-test / app zip helpers if present; keep installers only.
+          rm -f dist/*-app.zip dist/*.zip 2>/dev/null || true
+          ls -lh dist/
+
+      - name: Authenticate to Google Cloud
+        if: vars.GCS_RELEASES_BUCKET != ''
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_RELEASES_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        if: vars.GCS_RELEASES_BUCKET != ''
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Publish releases to GCS
+        if: vars.GCS_RELEASES_BUCKET != ''
+        env:
+          DIST_DIR: dist
+          GCS_BUCKET: ${{ vars.GCS_RELEASES_BUCKET }}
+          GCS_CHANNEL: ${{ steps.meta.outputs.channel }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          QUALITY: ${{ steps.meta.outputs.quality }}
+          GIT_REF: ${{ github.sha }}
+        run: |
+          chmod +x .github/scripts/publish-releases-gcs.sh
+          .github/scripts/publish-releases-gcs.sh
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.AppImage.asc
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summarize publish
+        run: |
+          CHANNEL="${{ steps.meta.outputs.channel }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          BUCKET="${{ vars.GCS_RELEASES_BUCKET }}"
+          MANIFEST=""
+          if [[ -n "$BUCKET" ]]; then
+            MANIFEST="https://storage.googleapis.com/${BUCKET}/releases/${CHANNEL}.json"
+          fi
+          echo "### Lucos publish" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Channel | \`$CHANNEL\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`$VERSION\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Manifest | \`${MANIFEST:-skipped (set GCS_RELEASES_BUCKET)}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ref | \`$GITHUB_REF\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifacts |" >> "$GITHUB_STEP_SUMMARY"
+          ls dist/ | while read f; do echo "  - \`$f\`" >> "$GITHUB_STEP_SUMMARY"; done

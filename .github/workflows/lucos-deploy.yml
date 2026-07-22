@@ -1,53 +1,28 @@
-# Lucos IDE -- environment-aware build & deploy (staging / production)
+# Lucos IDE -- legacy staging/production deploy workflow (DISABLED for auto triggers)
 #
-# Environments
-# ---------------------------------------------------------------------------
-#  staging    Triggered on every push to `main`.
-#             Builds all platforms with quality=insider (no code-signing).
-#             Uploads artifacts and deploys to the staging GitHub Environment.
-#             Requires no approvals -- fully automatic.
+# Lucos shipping now uses `.github/workflows/lucos-release.yml`:
+#   - push lucos-prod → unsigned builds + GCS insider
+#   - tag v*          → signed builds + GCS stable + GitHub Release
 #
-#  production Triggered on push of a semver tag (v*).
-#             Builds all platforms with quality=stable + full code-signing.
-#             Uploads signed artifacts and deploys to the production GitHub
-#             Environment.  Requires manual approval from a repo admin before
-#             the deploy step runs (configure in Settings -> Environments).
-#
-# Environment variables injected per env
-# ---------------------------------------------------------------------------
-#  LUCOS_QUALITY        insider | stable
-#  LUCOS_UPDATE_URL     https://update-staging.lucos.app | https://update.lucos.app
-#  LUCOS_SENTRY_DSN     (optional) Sentry DSN for the build
-#
-# Secrets (shared across both envs unless noted)
-# ---------------------------------------------------------------------------
-#  Staging only:
-#    (none -- unsigned builds)
-#  Production only:
-#    APPLE_CERT_P12, APPLE_CERT_PASSWORD, APPLE_TEAM_ID
-#    APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD, APPLE_ID
-#    DigiCert KeyLocker: SM_API_KEY, SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD
-#      (optional) SM_KEYPAIR_ALIAS / vars.SM_HOST — defaults key_1360134193 + clientauth.one.digicert.com
-#    Legacy PFX fallback: WINDOWS_PFX_DATA, WINDOWS_PFX_PASSWORD
-#    GPG_PRIVATE_KEY, GPG_KEY_ID
-#  Both envs (configure in repo secrets or per-environment secrets):
-#    LUCOS_SENTRY_DSN   (optional)
-#    LUCOS_DEPLOY_TOKEN (optional -- used by the deploy step)
-#    GCP_RELEASES_SA_KEY  JSON key for lucos-releases-ci service account
-#  Repository variables:
-#    GCP_PROJECT_ID       e.g. vertexai-459806
-#    GCS_RELEASES_BUCKET  e.g. lucos-releases-staging (prod may use lucos-releases later)
+# This file is kept for optional manual runs only (workflow_dispatch).
+# Do not re-enable push/tag triggers here or you will double-build releases.
 
-name: Lucos Deploy (staging / production)
+name: Lucos Deploy (manual only)
 
 on:
-  push:
-    branches: [main]          # --> staging
-    tags: ['v[0-9]+.*']       # --> production
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: staging (insider) or production (stable)
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
 
 concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: false   # never cancel a running deploy mid-flight
+  group: deploy-manual-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -74,9 +49,15 @@ jobs:
       - name: Pick environment
         id: pick
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          # Manual dispatch only — map input to channel.
+          ENV="${{ github.event.inputs.environment }}"
+          if [[ "$ENV" == "production" ]] || [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
             VERSION="${TAG#v}"
+            if [[ -z "$TAG" || "$TAG" == "$GITHUB_REF" ]]; then
+              VERSION="${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:7}"
+              TAG=""
+            fi
             echo "environment=production"  >> "$GITHUB_OUTPUT"
             echo "quality=stable"          >> "$GITHUB_OUTPUT"
             echo "update_url=https://update.lucos.app" >> "$GITHUB_OUTPUT"
