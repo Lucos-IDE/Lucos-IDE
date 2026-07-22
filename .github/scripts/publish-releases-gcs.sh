@@ -111,10 +111,11 @@ cat >"$MANIFEST_PATH" <<EOF
 }
 EOF
 
-gsutil -q cp \
+# -h is a gsutil global option (must come before the subcommand).
+gsutil -q \
   -h "Content-Type:application/json" \
   -h "Cache-Control:public, max-age=60" \
-  "$MANIFEST_PATH" "gs://${GCS_BUCKET}/releases/${GCS_CHANNEL}.json"
+  cp "$MANIFEST_PATH" "gs://${GCS_BUCKET}/releases/${GCS_CHANNEL}.json"
 
 echo ""
 echo "Published $uploaded artifact(s)."
