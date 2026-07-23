@@ -13,6 +13,7 @@ service LucosDaemon {
 	rpc SetCloudCredentials(SetCloudCredentialsRequest) returns (SetCloudCredentialsResponse);
 	rpc ClearCloudCredentials(ClearCloudCredentialsRequest) returns (ClearCloudCredentialsResponse);
 	rpc StartAgentTask(StartAgentTaskRequest) returns (stream TaskEvent);
+	rpc RespondToPermission(RespondToPermissionRequest) returns (RespondToPermissionResponse);
 	rpc GetPendingPatch(GetPendingPatchRequest) returns (PatchProposal);
 	rpc ApplyPatch(ApplyPatchRequest) returns (ApplyPatchResponse);
 	rpc RejectPatch(RejectPatchRequest) returns (RejectPatchResponse);
@@ -81,6 +82,17 @@ message TaskEvent {
 	google.protobuf.Timestamp timestamp = 4;
 	string payload_json = 5;
 	string severity = 6;
+}
+
+message RespondToPermissionRequest {
+	string task_id = 1;
+	string tool_call_id = 2;
+	bool approved = 3;
+	string deny_reason = 4;
+}
+
+message RespondToPermissionResponse {
+	bool accepted = 1;
 }
 
 message FileChange {

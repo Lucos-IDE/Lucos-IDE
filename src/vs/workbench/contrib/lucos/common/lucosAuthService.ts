@@ -79,4 +79,7 @@ export interface ILucosAuthService {
 
 	/** On startup (and on daemon reconnect): if a JWT is in the keychain, hand it to the daemon. */
 	restore(): Promise<void>;
+
+	/** Refresh access JWT if expired/near expiry. Returns false if session cleared. */
+	ensureFreshSession(): Promise<boolean>;
 }

@@ -62,6 +62,13 @@ suite('LucosDaemonServiceStub', () => {
 		assert.strictEqual(started, true, 'expected task.started with model/permissionMode request');
 	});
 
+	test('respondToPermission resolves in the stub', async () => {
+		const service = disposables.add(new LucosDaemonServiceStub());
+
+		await service.respondToPermission('task-1', 'tool-call-1', true);
+		await service.respondToPermission('task-1', 'tool-call-2', false, 'Not allowed');
+	});
+
 	test('indexWorkspace streams start, progress and completion', async () => {
 		const service = disposables.add(new LucosDaemonServiceStub());
 		const kinds: string[] = [];

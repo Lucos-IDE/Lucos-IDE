@@ -119,6 +119,18 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		this.setAuthStatus(status ? mapAuthStatus(status) : { state: LucosAuthState.Unauthenticated, cloudReachable: this.authStatus.cloudReachable });
 	}
 
+	async respondToPermission(taskId: string, toolCallId: string, approved: boolean, denyReason?: string): Promise<void> {
+		const response = await this.client.respondToPermission({
+			taskId,
+			toolCallId,
+			approved,
+			denyReason: denyReason ?? '',
+		});
+		if (!response.accepted) {
+			throw new Error('No pending permission request for this command (task/tool call mismatch or already resolved)');
+		}
+	}
+
 	async getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined> {
 		try {
 			return mapPatchProposal(await this.client.getPendingPatch({ patchId }));

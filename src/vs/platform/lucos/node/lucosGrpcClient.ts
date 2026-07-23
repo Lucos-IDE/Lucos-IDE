@@ -110,6 +110,10 @@ export class LucosGrpcClient extends Disposable {
 		return this.unary('clearCloudCredentials', {});
 	}
 
+	respondToPermission(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+		return this.unary('respondToPermission', request);
+	}
+
 	getPendingPatch(request: Record<string, unknown>): Promise<Record<string, unknown>> {
 		return this.unary('getPendingPatch', request);
 	}

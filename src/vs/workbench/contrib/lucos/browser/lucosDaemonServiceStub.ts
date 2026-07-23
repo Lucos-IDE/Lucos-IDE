@@ -48,6 +48,10 @@ export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonSe
 		this._setAuthStatus({ state: LucosAuthState.Unauthenticated, cloudReachable: true });
 	}
 
+	async respondToPermission(_taskId: string, _toolCallId: string, _approved: boolean, _denyReason?: string): Promise<void> {
+		// no-op in the stub
+	}
+
 	async getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined> {
 		return { patchId, summary: 'Stub patch (no real changes).', fileChanges: [] };
 	}

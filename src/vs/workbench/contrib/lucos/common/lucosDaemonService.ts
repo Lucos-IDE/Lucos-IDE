@@ -47,6 +47,9 @@ export interface ILucosDaemonService {
 	 */
 	startAgentTask(request: IStartAgentTaskRequest, token: CancellationToken): AsyncIterable<ITaskEvent>;
 
+	/** Resolve a pending tool permission request so the daemon can continue the task. */
+	respondToPermission(taskId: string, toolCallId: string, approved: boolean, denyReason?: string): Promise<void>;
+
 	//#region Patch flow (TW-165/166) - the daemon holds the pending patch and applies it on accept.
 	/** Fetch a proposed patch by id (from a `patch.proposed` task event). */
 	getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined>;

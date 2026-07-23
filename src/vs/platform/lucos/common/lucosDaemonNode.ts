@@ -31,6 +31,9 @@ export interface ILucosDaemonNodeService {
 	/** Per-task server-stream. `onDynamic` prefix is required by ProxyChannel for per-call events. */
 	onDynamicAgentTaskEvent(taskId: string): Event<ITaskEvent>;
 
+	/** Resolves a pending tool permission request for an active task. */
+	respondToPermission(taskId: string, toolCallId: string, approved: boolean, denyReason?: string): Promise<void>;
+
 	//#region Patch flow (TW-165/166)
 	getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined>;
 	applyPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;

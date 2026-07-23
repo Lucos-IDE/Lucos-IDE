@@ -38,6 +38,7 @@ suite('Lucos proto drift', () => {
 	const messages = [
 		'StartAgentTaskRequest',
 		'TaskEvent',
+		'RespondToPermissionRequest',
 		'PatchProposal',
 		'ApplyPatchRequest',
 		'IndexWorkspaceRequest',

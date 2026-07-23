@@ -186,6 +186,10 @@
 	flex-direction: column;
 	gap: 4px;
 	max-width: 100%;
+	/* Override workbench body { user-select: none } so chat text can be copied */
+	user-select: text;
+	-webkit-user-select: text;
+	cursor: text;
 }
 
 .lucos-turn.user {
@@ -358,6 +362,8 @@
 	border: 1px solid var(--vscode-panel-border);
 	border-radius: 6px;
 	background: var(--vscode-editor-background);
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .lucos-patch-title {
@@ -399,6 +405,83 @@
 	background: transparent;
 	color: var(--vscode-foreground);
 	border-color: var(--vscode-panel-border);
+}
+
+/* Command approval slot */
+.lucos-chat-command-approval {
+	display: none;
+}
+
+.lucos-chat-command-approval.visible {
+	display: block;
+}
+
+.lucos-command-card {
+	margin: 8px 0;
+	padding: 10px 12px;
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 6px;
+	background: var(--vscode-editor-background);
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.lucos-command-title {
+	font-weight: 600;
+	margin-bottom: 6px;
+	font-size: 13px;
+}
+
+.lucos-command-preview {
+	margin: 0 0 6px;
+	padding: 8px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	border-radius: 4px;
+	background: var(--vscode-textCodeBlock-background);
+	color: var(--vscode-editor-foreground);
+	font-family: var(--monaco-monospace-font);
+	font-size: var(--editor-font-size);
+}
+
+.lucos-command-detail,
+.lucos-command-status {
+	margin-top: 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.lucos-command-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.lucos-command-approve,
+.lucos-command-deny {
+	padding: 4px 12px;
+	border: 1px solid var(--vscode-button-border, transparent);
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.lucos-command-approve {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+}
+
+.lucos-command-deny {
+	background: transparent;
+	color: var(--vscode-foreground);
+	border-color: var(--vscode-panel-border);
+}
+
+.lucos-command-approve:disabled,
+.lucos-command-deny:disabled {
+	cursor: default;
+	opacity: 0.6;
 }
 
 /* Composer — single card (Cursor-like), no nested input chrome */
@@ -464,6 +547,8 @@
 	box-sizing: border-box;
 	-webkit-appearance: none;
 	appearance: none;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .lucos-composer-input:focus,

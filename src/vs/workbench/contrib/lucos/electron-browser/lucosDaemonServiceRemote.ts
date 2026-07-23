@@ -60,6 +60,10 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 		return this.nodeService.clearCloudCredentials();
 	}
 
+	respondToPermission(taskId: string, toolCallId: string, approved: boolean, denyReason?: string): Promise<void> {
+		return this.nodeService.respondToPermission(taskId, toolCallId, approved, denyReason);
+	}
+
 	getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined> {
 		return this.nodeService.getPendingPatch(patchId);
 	}

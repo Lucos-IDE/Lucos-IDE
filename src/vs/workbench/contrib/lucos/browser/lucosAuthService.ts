@@ -7,7 +7,7 @@ import { Action } from '../../../../base/common/actions.js';
 import { decodeBase64 } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
@@ -31,6 +31,9 @@ const REFRESH_TOKEN_KEY = 'lucos.cloud.refreshToken';
 const USER_ID_KEY = 'lucos.cloud.userId';
 /** Keychain key for the signed-in user's email address. */
 const USER_EMAIL_KEY = 'lucos.cloud.email';
+
+/** Proactive refresh window: refresh ~5 minutes before JWT `exp`. */
+export const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
 interface IAuthResponse {
 	readonly success?: boolean;
@@ -65,6 +68,11 @@ function readJwtExpiryMs(token: string): number | undefined {
 	}
 }
 
+/** Milliseconds until proactive refresh should fire; 0 means refresh now. */
+export function msUntilRefresh(expMs: number, nowMs: number, skewMs: number = REFRESH_SKEW_MS): number {
+	return Math.max(0, expMs - skewMs - nowMs);
+}
+
 export class LucosAuthService extends Disposable implements ILucosAuthService {
 
 	declare readonly _serviceBrand: undefined;
@@ -85,6 +93,8 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	private _pendingGoogleNotification: INotificationHandle | undefined;
 	private _pendingGoogleTimeout: ReturnType<typeof setTimeout> | undefined;
 	private _syncInFlight: Promise<void> | undefined;
+	private _refreshInFlight: Promise<boolean> | undefined;
+	private _refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
@@ -99,12 +109,21 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	) {
 		super();
 		this.restorePromise = new Promise<void>(resolve => { this._resolveRestorePromise = resolve; });
+		this._register(toDisposable(() => {
+			clearTimeout(this._refreshTimer);
+			this._refreshTimer = undefined;
+		}));
 
 		// Daemon keeps cloud JWT in memory only. Re-hand keychain credentials whenever it
 		// (re)connects so restart/reconnect does not leave IDE signed-in and daemon unauthenticated.
+		// Ensure the JWT is still fresh (or refresh it) before syncing.
 		this._register(this.lucosDaemonService.onDidChangeConnectionState(state => {
 			if (state === LucosConnectionState.Connected) {
-				void this.syncCredentialsToDaemon();
+				void this.ensureFreshSession().then(ok => {
+					if (ok) {
+						void this.syncCredentialsToDaemon();
+					}
+				});
 			}
 		}));
 	}
@@ -371,6 +390,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			this._setSignedIn(true, { userId, email });
 			// Hand credentials to the daemon if available; failure is non-fatal — tokens are in keychain.
 			await this.handCredentialsToDaemon({ accessToken: token, userId });
+			this.scheduleRefresh(token);
 			this.notificationService.notify({ severity: Severity.Info, message: localize('lucos.loginGoogle.success', "Signed in to Lucos with Google.") });
 			this._cancelPendingGoogle(true);
 		} catch (error) {
@@ -387,6 +407,8 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	}
 
 	async logout(): Promise<void> {
+		clearTimeout(this._refreshTimer);
+		this._refreshTimer = undefined;
 		await this.secretStorageService.delete(JWT_SECRET_KEY);
 		await this.secretStorageService.delete(REFRESH_TOKEN_KEY);
 		await this.secretStorageService.delete(USER_ID_KEY);
@@ -407,20 +429,147 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			if (!token) {
 				return;
 			}
-			const userId = await this.secretStorageService.get(USER_ID_KEY);
-			const email = await this.secretStorageService.get(USER_EMAIL_KEY);
-			// Restore in-memory signed-in state from keychain immediately — no daemon needed.
-			this._setSignedIn(true, {
-				userId: userId ?? undefined,
-				email: email ?? undefined,
-			});
-			// Hand off now if daemon is up; Connected listener re-tries after reconnect.
-			await this.syncCredentialsToDaemon();
+			const exp = readJwtExpiryMs(token);
+			const now = Date.now();
+			if (exp === undefined || exp <= now + REFRESH_SKEW_MS) {
+				const ok = await this.ensureFreshSession();
+				if (!ok) {
+					return; // already force-signed-out
+				}
+			} else {
+				const userId = await this.secretStorageService.get(USER_ID_KEY);
+				const email = await this.secretStorageService.get(USER_EMAIL_KEY);
+				this._setSignedIn(true, {
+					userId: userId ?? undefined,
+					email: email ?? undefined,
+				});
+				await this.syncCredentialsToDaemon();
+				this.scheduleRefresh(token);
+			}
 		} finally {
 			// Always resolve so anything awaiting restorePromise unblocks regardless of outcome.
 			this._resolveRestorePromise?.();
 			this._resolveRestorePromise = undefined;
 		}
+	}
+
+	/**
+	 * Refresh access JWT if expired or within {@link REFRESH_SKEW_MS} of expiry.
+	 * Returns false if the session was cleared (hard fail).
+	 */
+	ensureFreshSession(): Promise<boolean> {
+		if (!this._refreshInFlight) {
+			this._refreshInFlight = this.doEnsureFreshSession().finally(() => {
+				this._refreshInFlight = undefined;
+			});
+		}
+		return this._refreshInFlight;
+	}
+
+	private async doEnsureFreshSession(): Promise<boolean> {
+		const token = await this.secretStorageService.get(JWT_SECRET_KEY);
+		if (!token) {
+			if (this._isSignedIn) {
+				this._setSignedIn(false);
+			}
+			return false;
+		}
+		const exp = readJwtExpiryMs(token);
+		const now = Date.now();
+		if (exp === undefined || exp <= now + REFRESH_SKEW_MS) {
+			this.logService.info('[LucosAuth] ensureFreshSession: token expired or near expiry, refreshing');
+			return this.refreshSession();
+		}
+		this.scheduleRefresh(token);
+		return true;
+	}
+
+	/** POST /api/v1/auth/refresh; on failure force-signs-out. */
+	private async refreshSession(): Promise<boolean> {
+		const refreshToken = await this.secretStorageService.get(REFRESH_TOKEN_KEY);
+		if (!refreshToken) {
+			this.logService.warn('[LucosAuth] refreshSession: no refresh token in keychain');
+			await this.forceSignOut();
+			return false;
+		}
+
+		try {
+			const gatewayUrl = this.gatewayUrl();
+			this.logService.info('[LucosAuth] refreshSession: calling gateway refresh');
+			const context = await this.requestService.request({
+				type: 'POST',
+				url: `${gatewayUrl}/api/v1/auth/refresh`,
+				headers: { 'Content-Type': 'application/json' },
+				data: JSON.stringify({ refreshToken }),
+				callSite: 'lucos.refresh',
+			}, CancellationToken.None);
+
+			if (!isSuccess(context)) {
+				const message = await this.readGatewayError(context, localize('lucos.refresh.badStatus', "gateway responded {0}", context.res.statusCode ?? 0));
+				this.logService.warn('[LucosAuth] refreshSession: refresh failed', message);
+				await this.forceSignOut();
+				return false;
+			}
+
+			const body = await asJson<IAuthResponse>(context);
+			const token = body?.token ?? body?.accessToken;
+			if (!token) {
+				this.logService.warn('[LucosAuth] refreshSession: success response missing token');
+				await this.forceSignOut();
+				return false;
+			}
+
+			await this.persistSession(token, {
+				refreshToken: body?.refreshToken,
+				userId: body?.userId ?? body?.user?.id,
+				email: body?.email ?? body?.user?.email,
+				orgId: body?.orgId ?? body?.user?.orgId,
+			});
+			this.logService.info('[LucosAuth] refreshSession: session refreshed');
+			return true;
+		} catch (error) {
+			this.logService.error('[LucosAuth] refreshSession: network or unexpected error',
+				error instanceof Error ? error.message : String(error));
+			await this.forceSignOut();
+			return false;
+		}
+	}
+
+	/** Clear keychain session without a success notification (refresh hard-fail path). */
+	private async forceSignOut(): Promise<void> {
+		this.logService.warn('[LucosAuth] forceSignOut: clearing session due to refresh failure');
+		clearTimeout(this._refreshTimer);
+		this._refreshTimer = undefined;
+		await this.secretStorageService.delete(JWT_SECRET_KEY);
+		await this.secretStorageService.delete(REFRESH_TOKEN_KEY);
+		await this.secretStorageService.delete(USER_ID_KEY);
+		await this.secretStorageService.delete(USER_EMAIL_KEY);
+		this._setSignedIn(false);
+		try {
+			await this.lucosDaemonService.clearCloudCredentials();
+		} catch (daemonError) {
+			this.logService.warn('[LucosAuth] forceSignOut: daemon unavailable, local credentials cleared',
+				daemonError instanceof Error ? daemonError.message : String(daemonError));
+		}
+	}
+
+	/** Schedule proactive refresh ~5 minutes before JWT exp. */
+	private scheduleRefresh(accessToken: string): void {
+		clearTimeout(this._refreshTimer);
+		this._refreshTimer = undefined;
+		const exp = readJwtExpiryMs(accessToken);
+		if (exp === undefined) {
+			return;
+		}
+		const delay = msUntilRefresh(exp, Date.now());
+		if (delay === 0) {
+			void this.ensureFreshSession();
+			return;
+		}
+		this.logService.trace('[LucosAuth] scheduleRefresh', `delayMs=${delay}`);
+		this._refreshTimer = setTimeout(() => {
+			void this.ensureFreshSession();
+		}, delay);
 	}
 
 	/**
@@ -524,6 +673,7 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 			userId: opts.userId,
 			orgId: opts.orgId,
 		});
+		this.scheduleRefresh(token);
 	}
 
 	private async authenticate(email: string, password: string, action: 'sign-in' | 'sign-up' = 'sign-in', extras?: Record<string, string>): Promise<{ token: string; refreshToken?: string; userId?: string; orgId?: string }> {

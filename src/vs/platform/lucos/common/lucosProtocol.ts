@@ -126,6 +126,16 @@ export interface ITaskEvent {
 	readonly payload: unknown;
 }
 
+/** A tool execution awaiting an explicit user decision (`permission.requested`). */
+export interface ILucosPermissionRequest {
+	readonly taskId: string;
+	readonly toolCallId: string;
+	readonly toolName: string;
+	readonly command?: string;
+	readonly cwd?: string;
+	readonly reason?: string;
+}
+
 /** A single file change within a proposed patch (`FileChange`) — TW-165/166. */
 export interface ILucosFileChange {
 	readonly path: string;
