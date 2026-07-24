@@ -330,7 +330,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 			[VerifyExtensionSignatureConfigKey]: {
 				type: 'boolean',
 				description: localize('extensions.verifySignature', "When enabled, extensions are verified to be signed before getting installed."),
-				default: true,
+				default: false, // Open VSX packages are typically unsigned
 				scope: ConfigurationScope.APPLICATION,
 				included: isNative
 			},
