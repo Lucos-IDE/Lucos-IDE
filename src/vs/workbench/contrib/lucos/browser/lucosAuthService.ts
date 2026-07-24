@@ -283,6 +283,38 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		}
 	}
 
+	async forgotPassword(email: string): Promise<void> {
+		this.logService.info('[LucosAuth] forgotPassword', `email=${email}`);
+		const gatewayUrl = this.gatewayUrl();
+		const context = await this.requestService.request({
+			type: 'POST',
+			url: `${gatewayUrl}/api/v1/auth/forgot-password`,
+			headers: { 'Content-Type': 'application/json' },
+			data: JSON.stringify({ email }),
+			callSite: 'lucos.forgotPassword',
+		}, CancellationToken.None);
+
+		if (!isSuccess(context)) {
+			throw new Error(await this.readGatewayError(context, localize('lucos.forgotPassword.badStatus', "gateway responded {0}", context.res.statusCode ?? 0)));
+		}
+	}
+
+	async resetPassword(email: string, otp: string, password: string): Promise<void> {
+		this.logService.info('[LucosAuth] resetPassword', `email=${email}`);
+		const gatewayUrl = this.gatewayUrl();
+		const context = await this.requestService.request({
+			type: 'POST',
+			url: `${gatewayUrl}/api/v1/auth/reset-password`,
+			headers: { 'Content-Type': 'application/json' },
+			data: JSON.stringify({ email, otp, password }),
+			callSite: 'lucos.resetPassword',
+		}, CancellationToken.None);
+
+		if (!isSuccess(context)) {
+			throw new Error(await this.readGatewayError(context, localize('lucos.resetPassword.badStatus', "gateway responded {0}", context.res.statusCode ?? 0)));
+		}
+	}
+
 	async loginWithGoogle(): Promise<boolean> {
 		const gatewayUrl = ((this.configurationService.getValue<string>(LucosSettingId.CloudGatewayUrl) ?? '').trim()
 			|| (this.productService.lucosGatewayUrl ?? '')).replace(/\/+$/, '');

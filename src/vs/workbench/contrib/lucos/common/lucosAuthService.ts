@@ -77,6 +77,18 @@ export interface ILucosAuthService {
 	/** Resend the sign-up verification OTP for a pending registration. */
 	resendSignupOtp(email: string): Promise<void>;
 
+	/**
+	 * Request a password-reset OTP for the given email. Does not return a JWT —
+	 * follow with {@link resetPassword} after the user receives the code.
+	 */
+	forgotPassword(email: string): Promise<void>;
+
+	/**
+	 * Complete password reset with the 6-digit OTP and a new password.
+	 * Does **not** sign the user in; they must use sign-in afterwards.
+	 */
+	resetPassword(email: string, otp: string, password: string): Promise<void>;
+
 	/** On startup (and on daemon reconnect): if a JWT is in the keychain, hand it to the daemon. */
 	restore(): Promise<void>;
 

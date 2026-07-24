@@ -15,6 +15,21 @@ import { ILucosAuthService } from '../common/lucosAuthService.js';
 /** Command that can be called from anywhere to open the Lucos sign-in overlay. */
 export const LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID = 'lucos.showSignInOverlay';
 
+const PASSWORD_COMPLEXITY_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,100}$/;
+
+function validatePassword(password: string): string | null {
+	if (password.length < 8) {
+		return localize('lucos.password.err.min', "Password must be at least 8 characters.");
+	}
+	if (password.length > 100) {
+		return localize('lucos.password.err.max', "Password must be at most 100 characters.");
+	}
+	if (!PASSWORD_COMPLEXITY_REGEX.test(password)) {
+		return localize('lucos.password.err.complexity', "Password must include uppercase, lowercase, a digit, and a special character.");
+	}
+	return null;
+}
+
 /**
  * Cursor-like full-window sign-in overlay.  Covers the entire workbench with a branded
  * sign-in screen whenever the user is not authenticated.  Hides automatically via
@@ -25,6 +40,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 	static readonly ID = 'workbench.contrib.lucosSignInOverlay';
 
 	private readonly overlay: HTMLElement;
+	private _resetOverlay: (() => void) | undefined;
 
 	constructor(
 		@ILucosAuthService private readonly authService: ILucosAuthService,
@@ -56,6 +72,9 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		});
 		this._register(authService.onDidChangeSignInState(signedIn => {
 			this.logService.info(`[LucosSignIn] auth state changed → isSignedIn=${signedIn}, overlay visible=${!signedIn}`);
+			if (!signedIn) {
+				this._resetOverlay?.();
+			}
 			this.setVisible(!signedIn);
 		}));
 		this._register({ dispose: () => this.overlay.remove() });
@@ -264,7 +283,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 		const { input: suNameInput } = makeInput(signUpPanel, localize('lucos.signUp.name', "Full name"), 'text', 'Jane Doe', 'name');
 		const { input: suEmailInput } = makeInput(signUpPanel, localize('lucos.signUp.workEmail', "Work email"), 'email', 'you@company.com', 'email');
-		const { input: suPasswordInput } = makePasswordInput(signUpPanel, localize('lucos.signUp.password', "Password"), '8+ chars, upper, lower & symbol', 'new-password');
+		const { input: suPasswordInput } = makePasswordInput(signUpPanel, localize('lucos.signUp.password', "Password"), localize('lucos.signUp.passwordHint', "8+ chars, upper, lower, digit & symbol"), 'new-password');
 
 		// Terms row
 		const termsRow = document.createElement('div');
@@ -307,9 +326,21 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 		const { input: siEmailInput } = makeInput(signInPanel, localize('lucos.signIn.email', "Email"), 'email', 'you@company.com', 'email');
 		const { input: siPasswordInput } = makePasswordInput(signInPanel, localize('lucos.signIn.password', "Password"), 'Your password', 'current-password');
-		siPasswordInput.parentElement!.parentElement!.style.marginBottom = '18px';
+
+		const forgotRow = document.createElement('div');
+		Object.assign(forgotRow.style, { display: 'flex', justifyContent: 'flex-end', marginTop: '-6px', marginBottom: '14px' });
+		const forgotLink = document.createElement('span');
+		forgotLink.textContent = localize('lucos.signIn.forgotPassword', "Forgot password?");
+		Object.assign(forgotLink.style, { color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontSize: '12px', fontWeight: '600' });
+		forgotRow.appendChild(forgotLink);
+		signInPanel.appendChild(forgotRow);
 
 		const siError = makeErrorEl(signInPanel);
+		const siSuccess = document.createElement('div');
+		Object.assign(siSuccess.style, { fontSize: '12px', color: 'var(--vscode-charts-green, #22c55e)', display: 'none', lineHeight: '1.4', marginBottom: '10px' });
+		signInPanel.appendChild(siSuccess);
+		const setSuccess = (msg: string) => { siSuccess.textContent = msg; siSuccess.style.display = msg ? 'block' : 'none'; };
+
 		const siBtn = makeSubmitBtn(signInPanel, localize('lucos.signIn.submit', "Sign In"));
 		siBtn.style.marginBottom = '18px';
 
@@ -365,14 +396,66 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 		let pendingVerifyEmail = '';
 
+		// === RESET PASSWORD PANEL ============================================
+		const resetPanel = dom.append(card, document.createElement('div'));
+		Object.assign(resetPanel.style, { display: 'none', flexDirection: 'column' });
+
+		const rpTitle = dom.append(resetPanel, document.createElement('div'));
+		rpTitle.textContent = localize('lucos.reset.title', "Reset your password");
+		Object.assign(rpTitle.style, { fontSize: '20px', fontWeight: '700', color: 'var(--vscode-foreground)', marginBottom: '4px' });
+
+		const rpSubtitle = dom.append(resetPanel, document.createElement('div'));
+		rpSubtitle.textContent = localize('lucos.reset.subtitle', "Enter the 6-digit code we sent you, then choose a new password.");
+		Object.assign(rpSubtitle.style, { fontSize: '13px', color: 'var(--vscode-descriptionForeground)', marginBottom: '20px' });
+
+		const { input: rpEmailInput } = makeInput(resetPanel, localize('lucos.reset.email', "Email"), 'email', 'you@company.com', 'email');
+		const { input: rpOtpInput } = makeInput(resetPanel, localize('lucos.reset.code', "Reset code"), 'text', '123456', 'one-time-code');
+		rpOtpInput.maxLength = 6;
+		rpOtpInput.inputMode = 'numeric';
+		rpOtpInput.pattern = '[0-9]*';
+		rpOtpInput.style.letterSpacing = '4px';
+		rpOtpInput.style.fontSize = '18px';
+		rpOtpInput.style.textAlign = 'center';
+
+		const { input: rpPasswordInput } = makePasswordInput(resetPanel, localize('lucos.reset.password', "New password"), localize('lucos.signUp.passwordHint', "8+ chars, upper, lower, digit & symbol"), 'new-password');
+
+		const rpError = makeErrorEl(resetPanel);
+		const rpBtn = makeSubmitBtn(resetPanel, localize('lucos.reset.submit', "Reset password"));
+		rpBtn.style.marginBottom = '12px';
+
+		const rpResend = document.createElement('button');
+		rpResend.type = 'button';
+		rpResend.textContent = localize('lucos.reset.resend', "Resend code");
+		Object.assign(rpResend.style, {
+			width: '100%', padding: '10px 0', borderRadius: '8px', cursor: 'pointer',
+			background: 'transparent', border: '1px solid var(--vscode-button-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)))',
+			color: 'var(--vscode-foreground)', fontSize: '13px', fontFamily: 'inherit', marginBottom: '18px',
+		});
+		resetPanel.appendChild(rpResend);
+
+		const rpFooter = dom.append(resetPanel, document.createElement('div'));
+		Object.assign(rpFooter.style, { textAlign: 'center', fontSize: '13px', color: 'var(--vscode-descriptionForeground)' });
+		rpFooter.appendChild(document.createTextNode(localize('lucos.reset.remember', "Remember your password? ")));
+		const rpBackLink = document.createElement('span');
+		rpBackLink.textContent = localize('lucos.reset.back', "Back to sign in");
+		Object.assign(rpBackLink.style, { color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontWeight: '600' });
+		rpFooter.appendChild(rpBackLink);
+
+		let pendingResetEmail = '';
+
 		// --- Panel switch ----------------------------------------------------
 		const showOnly = (panel: HTMLElement) => {
 			signUpPanel.style.display = panel === signUpPanel ? 'flex' : 'none';
 			signInPanel.style.display = panel === signInPanel ? 'flex' : 'none';
 			verifyPanel.style.display = panel === verifyPanel ? 'flex' : 'none';
+			resetPanel.style.display = panel === resetPanel ? 'flex' : 'none';
 		};
 		const showSignUp = () => { showOnly(signUpPanel); setError(suError, ''); };
-		const showSignIn = () => { showOnly(signInPanel); setError(siError, ''); };
+		const showSignIn = (successMsg?: string) => {
+			showOnly(signInPanel);
+			setError(siError, '');
+			setSuccess(successMsg ?? '');
+		};
 		const showVerify = (email: string, message?: string) => {
 			pendingVerifyEmail = email;
 			veSubtitle.textContent = message
@@ -382,9 +465,48 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			showOnly(verifyPanel);
 			veOtpInput.focus();
 		};
-		this._register(dom.addDisposableListener(suSignInLink, 'click', showSignIn));
+		const showReset = (email: string, message?: string) => {
+			pendingResetEmail = email;
+			rpEmailInput.value = email;
+			rpOtpInput.value = '';
+			rpPasswordInput.value = '';
+			rpSubtitle.textContent = message
+				|| localize('lucos.reset.subtitleEmail', "Enter the 6-digit code sent to {0}, then choose a new password.", email);
+			setError(rpError, '');
+			showOnly(resetPanel);
+			rpOtpInput.focus();
+		};
+		this._register(dom.addDisposableListener(suSignInLink, 'click', () => showSignIn()));
 		this._register(dom.addDisposableListener(siSignUpLink, 'click', showSignUp));
 		this._register(dom.addDisposableListener(veBackLink, 'click', showSignUp));
+		this._register(dom.addDisposableListener(rpBackLink, 'click', () => showSignIn()));
+
+		this._resetOverlay = () => {
+			suNameInput.value = '';
+			suEmailInput.value = '';
+			suPasswordInput.value = '';
+			termsCheck.checked = false;
+			siEmailInput.value = '';
+			siPasswordInput.value = '';
+			veOtpInput.value = '';
+			rpEmailInput.value = '';
+			rpOtpInput.value = '';
+			rpPasswordInput.value = '';
+			pendingVerifyEmail = '';
+			pendingResetEmail = '';
+			setError(suError, '');
+			setError(siError, '');
+			setError(veError, '');
+			setError(rpError, '');
+			setSuccess('');
+			setSubmitting(suBtn, [suNameInput, suEmailInput, suPasswordInput], false, undefined, localize('lucos.signUp.submit', "Create account"));
+			setSubmitting(siBtn, [siEmailInput, siPasswordInput], false, undefined, localize('lucos.signIn.submit', "Sign In"));
+			setSubmitting(veBtn, [veOtpInput], false, undefined, localize('lucos.verify.submit', "Verify & continue"));
+			veResend.disabled = false;
+			setSubmitting(rpBtn, [rpEmailInput, rpOtpInput, rpPasswordInput], false, undefined, localize('lucos.reset.submit', "Reset password"));
+			rpResend.disabled = false;
+			showSignIn();
+		};
 
 		// --- Sign Up submit --------------------------------------------------
 		suBtn.addEventListener('click', async () => {
@@ -395,6 +517,8 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			if (!name) { setError(suError, localize('lucos.signUp.err.name', "Please enter your full name.")); return; }
 			if (!email) { setError(suError, localize('lucos.signUp.err.email', "Please enter your email address.")); return; }
 			if (!password) { setError(suError, localize('lucos.signUp.err.password', "Please enter a password.")); return; }
+			const passwordErr = validatePassword(password);
+			if (passwordErr) { setError(suError, passwordErr); return; }
 			if (!termsCheck.checked) { setError(suError, localize('lucos.signUp.err.terms', "Please agree to the Terms & Privacy Policy.")); return; }
 
 			setSubmitting(suBtn, [suNameInput, suEmailInput, suPasswordInput], true, localize('lucos.loading', "Please wait\u2026"));
@@ -432,6 +556,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 				const msg = err instanceof Error ? err.message : String(err);
 				this.logService.error('[LucosSignIn] verify failed:', msg);
 				setError(veError, msg);
+			} finally {
 				setSubmitting(veBtn, [veOtpInput], false, undefined, localize('lucos.verify.submit', "Verify & continue"));
 				veResend.disabled = false;
 			}
@@ -454,13 +579,92 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			}
 		});
 
+		// --- Forgot password -------------------------------------------------
+		forgotLink.addEventListener('click', async () => {
+			const email = siEmailInput.value.trim() || rpEmailInput.value.trim();
+			setError(siError, '');
+			setSuccess('');
+			if (!email) {
+				setError(siError, localize('lucos.reset.err.email', "Enter your email address, then tap Forgot password."));
+				siEmailInput.focus();
+				return;
+			}
+			setSubmitting(siBtn, [siEmailInput, siPasswordInput], true, localize('lucos.loading', "Please wait\u2026"));
+			forgotLink.style.pointerEvents = 'none';
+			try {
+				this.logService.info('[LucosSignIn] requesting password reset OTP', `email=${email}`);
+				await this.authService.forgotPassword(email);
+				showReset(email, localize('lucos.reset.sent', "A reset code was sent to {0}.", email));
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.logService.error('[LucosSignIn] forgot password failed:', msg);
+				setError(siError, msg);
+			} finally {
+				setSubmitting(siBtn, [siEmailInput, siPasswordInput], false, undefined, localize('lucos.signIn.submit', "Sign In"));
+				forgotLink.style.pointerEvents = '';
+			}
+		});
+
+		rpBtn.addEventListener('click', async () => {
+			const email = rpEmailInput.value.trim() || pendingResetEmail;
+			const otp = rpOtpInput.value.trim();
+			const password = rpPasswordInput.value;
+			setError(rpError, '');
+			if (!email) { setError(rpError, localize('lucos.reset.err.emailRequired', "Please enter your email address.")); return; }
+			if (!/^\d{6}$/.test(otp)) {
+				setError(rpError, localize('lucos.reset.err.otp', "Enter the 6-digit code from your email."));
+				return;
+			}
+			if (!password) { setError(rpError, localize('lucos.reset.err.password', "Please enter a new password.")); return; }
+			const passwordErr = validatePassword(password);
+			if (passwordErr) { setError(rpError, passwordErr); return; }
+
+			setSubmitting(rpBtn, [rpEmailInput, rpOtpInput, rpPasswordInput], true, localize('lucos.loading', "Please wait\u2026"));
+			rpResend.disabled = true;
+			try {
+				this.logService.info('[LucosSignIn] submitting password reset', `email=${email}`);
+				await this.authService.resetPassword(email, otp, password);
+				showSignIn(localize('lucos.reset.success', "Password updated. Sign in with your new password."));
+				siEmailInput.value = email;
+				siPasswordInput.value = '';
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.logService.error('[LucosSignIn] reset password failed:', msg);
+				setError(rpError, msg);
+			} finally {
+				setSubmitting(rpBtn, [rpEmailInput, rpOtpInput, rpPasswordInput], false, undefined, localize('lucos.reset.submit', "Reset password"));
+				rpResend.disabled = false;
+			}
+		});
+
+		rpResend.addEventListener('click', async () => {
+			const email = rpEmailInput.value.trim() || pendingResetEmail;
+			if (!email) {
+				setError(rpError, localize('lucos.reset.err.emailRequired', "Please enter your email address."));
+				return;
+			}
+			setError(rpError, '');
+			rpResend.disabled = true;
+			try {
+				await this.authService.forgotPassword(email);
+				pendingResetEmail = email;
+				rpSubtitle.textContent = localize('lucos.reset.resent', "A new reset code was sent to {0}.", email);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				setError(rpError, msg);
+			} finally {
+				rpResend.disabled = false;
+			}
+		});
+
 		// --- Sign In submit --------------------------------------------------
 		siBtn.addEventListener('click', async () => {
 			const email = siEmailInput.value.trim();
 			const password = siPasswordInput.value;
 			setError(siError, '');
+			setSuccess('');
 			if (!email) { setError(siError, localize('lucos.signIn.err.email', "Please enter your email address.")); return; }
-			if (!password) { setError(siError, localize('lucos.signIn.err.password', "Please enter a password.")); return; }
+			if (!password) { setError(siError, localize('lucos.signIn.err.password', "Please enter your password.")); return; }
 
 			setSubmitting(siBtn, [siEmailInput, siPasswordInput], true, localize('lucos.loading', "Please wait\u2026"));
 			try {
@@ -470,6 +674,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 				const msg = err instanceof Error ? err.message : String(err);
 				this.logService.error('[LucosSignIn] sign-in failed:', msg);
 				setError(siError, msg);
+			} finally {
 				setSubmitting(siBtn, [siEmailInput, siPasswordInput], false, undefined, localize('lucos.signIn.submit', "Sign In"));
 			}
 		});
@@ -481,6 +686,9 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		siEmailInput.addEventListener('keydown', e => { if (e.key === 'Enter') { siPasswordInput.focus(); } });
 		siPasswordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { siBtn.click(); } });
 		veOtpInput.addEventListener('keydown', e => { if (e.key === 'Enter') { veBtn.click(); } });
+		rpEmailInput.addEventListener('keydown', e => { if (e.key === 'Enter') { rpOtpInput.focus(); } });
+		rpOtpInput.addEventListener('keydown', e => { if (e.key === 'Enter') { rpPasswordInput.focus(); } });
+		rpPasswordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { rpBtn.click(); } });
 
 		// Mount inside the workbench container: the --vscode-* theme variables are defined
 		// on .monaco-workbench, so the overlay only follows light/dark themes from there.
@@ -489,5 +697,3 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		return overlay;
 	}
 }
-
-
