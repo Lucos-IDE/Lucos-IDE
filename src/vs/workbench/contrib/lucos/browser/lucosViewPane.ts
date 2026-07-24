@@ -32,7 +32,7 @@ import { ILucosMessage, ILucosSession, LucosMessageRole } from '../common/lucosC
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosChatRequest, ILucosChatRequestService } from '../common/lucosChatRequestService.js';
 import { windowChatHistory } from '../common/lucosChatHistory.js';
-import { resolveEmptyAssistantFallback } from '../common/lucosAssistantSummary.js';
+import { resolveCompletionAppend, resolveEmptyAssistantFallback, sanitizeAssistantText } from '../common/lucosAssistantSummary.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 import { ILucosPatchProposal, ILucosPermissionRequest, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
@@ -52,7 +52,6 @@ interface ITurnElements {
 	readonly turn: HTMLElement;
 	readonly body: HTMLElement;
 	readonly footer?: HTMLElement;
-	readonly typing?: HTMLElement;
 }
 
 interface ISessionUiState {
@@ -112,6 +111,7 @@ export class LucosChatViewPane extends ViewPane {
 	private chipsContainer!: HTMLElement;
 	private inputBox!: HTMLTextAreaElement;
 	private sendButton!: HTMLButtonElement;
+	private sendIcon!: HTMLElement;
 	private modeButton!: HTMLButtonElement;
 	private modelButton!: HTMLButtonElement;
 	private composerMode: LucosComposerMode = 'agent';
@@ -198,7 +198,12 @@ export class LucosChatViewPane extends ViewPane {
 			}
 			this.streamTokens.clear();
 			this.disposeMentionSearch();
-			this.hideMentionMenu();
+			this.closeComposerPopups();
+		}));
+		this._register(this.onDidChangeBodyVisibility(visible => {
+			if (!visible) {
+				this.closeComposerPopups();
+			}
 		}));
 	}
 
@@ -274,11 +279,13 @@ export class LucosChatViewPane extends ViewPane {
 		}));
 
 		this.sendButton = dom.append(toolbar, dom.$('button.lucos-composer-send')) as HTMLButtonElement;
-		this.sendButton.classList.add(...ThemeIcon.asClassNameArray(Codicon.arrowUp));
+		this.sendIcon = dom.append(this.sendButton, dom.$('span')) as HTMLElement;
+		this.sendIcon.classList.add(...ThemeIcon.asClassNameArray(Codicon.arrowUp));
 		this.sendButton.title = localize('lucos.chat.send', "Send");
 		this.sendButton.setAttribute('aria-label', localize('lucos.chat.send', "Send"));
 
 		this._register(dom.addDisposableListener(this.inputBox, 'keydown', (e: KeyboardEvent) => this.onInputKeyDown(e)));
+		this._register(dom.addDisposableListener(this.inputBox, 'focus', () => this.closeComposerDropdowns()));
 		this._register(dom.addDisposableListener(this.inputBox, 'input', () => {
 			this.resizeInput();
 			this.onComposerInput();
@@ -417,6 +424,20 @@ export class LucosChatViewPane extends ViewPane {
 				store.dispose();
 			},
 		});
+	}
+
+	/** Close mode/model dropdown overlays (does not touch the @ mention menu). */
+	private closeComposerDropdowns(): void {
+		if (this.openDropdownAnchor) {
+			this.contextViewService.hideContextView();
+		}
+	}
+
+	/** Close every composer overlay: mode/model dropdowns and the @ mention menu. */
+	private closeComposerPopups(): void {
+		this.hideMentionMenu();
+		this.contextViewService.hideContextView();
+		this.openDropdownAnchor = undefined;
 	}
 
 	private renderWelcome(): void {
@@ -659,6 +680,14 @@ export class LucosChatViewPane extends ViewPane {
 		} catch (error) {
 			this.conversationService.appendToMessage(assistant.id, `\n\n[error] ${error}`);
 		} finally {
+			// Drop stream token first so late permission events are ignored by showPermission.
+			if (this.streamTokens.get(sessionId) === cts) {
+				this.streamTokens.delete(sessionId);
+			}
+			cts.dispose();
+
+			this.dismissUnresolvedPermission(sessionId, isActive());
+
 			if (isActive()) {
 				this.timeline.finish();
 				this.setTypingIndicator(assistant.id, false);
@@ -666,10 +695,6 @@ export class LucosChatViewPane extends ViewPane {
 			this.ensureAssistantSummary(assistant.id, sessionId, goal, completionSummary);
 			this.conversationService.completeMessage(assistant.id);
 			ui.streamingAssistantId = undefined;
-			if (this.streamTokens.get(sessionId) === cts) {
-				this.streamTokens.delete(sessionId);
-			}
-			cts.dispose();
 			this.syncStreamingUi();
 		}
 	}
@@ -764,6 +789,8 @@ export class LucosChatViewPane extends ViewPane {
 	}
 
 	private onComposerInput(): void {
+		// Typing in the composer dismisses mode/model menus; @ mention stays driven by the token.
+		this.closeComposerDropdowns();
 		const token = this.detectMentionToken();
 		if (!token) {
 			this.hideMentionMenu();
@@ -1037,6 +1064,10 @@ export class LucosChatViewPane extends ViewPane {
 	}
 
 	private showPermission(sessionId: string, request: ILucosPermissionRequest): void {
+		// Ignore late permission events after the turn's stream has ended.
+		if (!this.streamTokens.has(sessionId)) {
+			return;
+		}
 		const ui = this.getSessionUi(sessionId);
 		if (ui.shownPermissionIds.has(request.toolCallId)) {
 			return;
@@ -1059,7 +1090,26 @@ export class LucosChatViewPane extends ViewPane {
 		this.scrollToBottom();
 	}
 
-	/** When the model only used tools (no model.delta), surface task/patch summary in the bubble. */
+	/** Auto-deny any unresolved approval card when the turn ends so the daemon broker entry is released. */
+	private dismissUnresolvedPermission(sessionId: string, isActiveSession: boolean): void {
+		const ui = this.sessionUi.get(sessionId);
+		const pending = ui?.pendingPermission;
+		if (!ui || !pending) {
+			return;
+		}
+		ui.pendingPermission = undefined;
+		if (isActiveSession) {
+			this.clearCommandApproval();
+		}
+		void this.lucosDaemonService.respondToPermission(
+			pending.taskId,
+			pending.toolCallId,
+			false,
+			'task ended',
+		).catch(() => { /* best-effort */ });
+	}
+
+	/** Surface task/patch summary in the bubble when missing or only a short preamble was streamed. */
 	private ensureAssistantSummary(
 		messageId: string,
 		sessionId: string,
@@ -1067,23 +1117,32 @@ export class LucosChatViewPane extends ViewPane {
 		completionSummary?: string,
 	): void {
 		const message = this.findMessage(messageId);
-		if (!message || message.content.trim()) {
+		if (!message) {
 			return;
 		}
 
 		const ui = this.getSessionUi(sessionId);
-		const resolved = resolveEmptyAssistantFallback({
+		const input = {
 			completionSummary,
 			goal,
 			pendingPatch: ui.pendingPatch,
-		});
-		const text =
-			resolved.kind === 'text' ? resolved.text
-				: resolved.kind === 'patchReview'
-					? localize('lucos.chat.patchOnly', "Review the proposed changes below.")
-					: localize('lucos.chat.noWrittenAnswer', "No written answer was returned. Check the activity timeline for tool results.");
+		};
 
-		this.conversationService.appendToMessage(messageId, text);
+		if (!message.content.trim()) {
+			const resolved = resolveEmptyAssistantFallback(input);
+			const text =
+				resolved.kind === 'text' ? resolved.text
+					: resolved.kind === 'patchReview'
+						? localize('lucos.chat.patchOnly', "Review the proposed changes below.")
+						: localize('lucos.chat.noWrittenAnswer', "No written answer was returned. Check the activity timeline for tool results.");
+			this.conversationService.appendToMessage(messageId, text);
+			return;
+		}
+
+		const append = resolveCompletionAppend(message.content, input);
+		if (append) {
+			this.conversationService.appendToMessage(messageId, `\n\n${append}`);
+		}
 	}
 
 	private findMessage(messageId: string): ILucosMessage | undefined {
@@ -1112,10 +1171,9 @@ export class LucosChatViewPane extends ViewPane {
 
 	private syncStreamingUi(): void {
 		const streaming = this.streamTokens.has(this.conversationService.activeSession.id);
-		this.sendButton.textContent = '';
-		this.sendButton.classList.remove(...ThemeIcon.asClassNameArray(Codicon.arrowUp));
-		this.sendButton.classList.remove(...ThemeIcon.asClassNameArray(Codicon.primitiveSquare));
-		this.sendButton.classList.add(...ThemeIcon.asClassNameArray(streaming ? Codicon.primitiveSquare : Codicon.arrowUp));
+		this.sendIcon.classList.remove(...ThemeIcon.asClassNameArray(Codicon.arrowUp));
+		this.sendIcon.classList.remove(...ThemeIcon.asClassNameArray(Codicon.primitiveSquare));
+		this.sendIcon.classList.add(...ThemeIcon.asClassNameArray(streaming ? Codicon.primitiveSquare : Codicon.arrowUp));
 		const label = streaming
 			? localize('lucos.chat.stop', "Stop")
 			: localize('lucos.chat.send', "Send");
@@ -1144,14 +1202,14 @@ export class LucosChatViewPane extends ViewPane {
 	}
 
 	private async retryConnection(): Promise<void> {
+		this.showBanner(localize('lucos.banner.reconnecting', "Reconnecting…"));
 		try {
-			const health = await this.lucosDaemonService.health();
-			if (health.serving) {
-				this.updateBanner();
-			}
+			await this.lucosDaemonService.reconnect();
+			await this.lucosDaemonService.getAuthStatus();
 		} catch {
-			// Still offline - leave the banner up.
+			// Still offline — updateBanner below re-shows Retry.
 		}
+		this.updateBanner();
 	}
 
 	private showBanner(text: string, actionLabel?: string, handler?: () => void): void {
@@ -1189,19 +1247,12 @@ export class LucosChatViewPane extends ViewPane {
 
 		const body = dom.append(turn, dom.$('.lucos-turn-body'));
 		let footer: HTMLElement | undefined;
-		let typing: HTMLElement | undefined;
 
 		if (!isUser) {
 			footer = dom.append(turn, dom.$('.lucos-turn-footer'));
-			typing = dom.append(turn, dom.$('.lucos-typing'));
-			const dots = dom.append(typing, dom.$('.lucos-typing-dots'));
-			for (let i = 0; i < 3; i++) {
-				dom.append(dots, dom.$('span'));
-			}
-			dom.append(typing, dom.$('span')).textContent = localize('lucos.chat.thinking', "Thinking");
 		}
 
-		this.turnElements.set(message.id, { turn, body, footer, typing });
+		this.turnElements.set(message.id, { turn, body, footer });
 		this.paintMessageBody(message);
 		this.setTypingIndicator(message.id, message.streaming);
 		this.scrollToBottom();
@@ -1224,14 +1275,33 @@ export class LucosChatViewPane extends ViewPane {
 
 		dom.clearNode(turn.body);
 		if (!message.content && message.streaming) {
+			this.renderAssistantSkeleton(turn.body);
 			return;
 		}
 
-		const markdown = new MarkdownString(message.content, { supportThemeIcons: true, isTrusted: false });
+		if (!message.content) {
+			return;
+		}
+
+		const sanitized = sanitizeAssistantText(message.content);
+		const markdown = new MarkdownString(sanitized, { supportThemeIcons: true, isTrusted: false });
+		// Daemon delivers complete bursts (not true incremental tokens); avoid incomplete-token artifacts.
 		const rendered = store.add(renderMarkdown(markdown, {
-			fillInIncompleteTokens: message.streaming,
+			fillInIncompleteTokens: false,
 		}));
 		turn.body.appendChild(rendered.element);
+		if (message.streaming) {
+			const caret = dom.append(turn.body, dom.$('span.lucos-streaming-caret'));
+			caret.setAttribute('aria-hidden', 'true');
+		}
+	}
+
+	private renderAssistantSkeleton(container: HTMLElement): void {
+		const skeleton = dom.append(container, dom.$('.lucos-assistant-skeleton'));
+		skeleton.setAttribute('aria-label', localize('lucos.chat.thinking', "Thinking"));
+		for (let i = 0; i < 3; i++) {
+			dom.append(skeleton, dom.$('.lucos-assistant-skeleton-line'));
+		}
 	}
 
 	private updateMessage(message: ILucosMessage): void {
@@ -1253,10 +1323,11 @@ export class LucosChatViewPane extends ViewPane {
 
 	private setTypingIndicator(messageId: string, visible: boolean): void {
 		const turn = this.turnElements.get(messageId);
-		if (!turn?.typing) {
+		if (!turn) {
 			return;
 		}
-		turn.typing.classList.toggle('visible', visible);
+		turn.turn.classList.toggle('lucos-turn-streaming', visible);
+		turn.turn.setAttribute('aria-busy', visible ? 'true' : 'false');
 	}
 
 	private scrollToBottom(): void {

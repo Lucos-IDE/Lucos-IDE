@@ -110,6 +110,19 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		return { serving: !!response.serving, version: response.version ?? '' };
 	}
 
+	async reconnect(): Promise<LucosConnectionState> {
+		if (this.ensurePromise) {
+			await this.ensurePromise;
+		}
+		this.ensurePromise = this.ensureThenConnect();
+		try {
+			await this.ensurePromise;
+		} finally {
+			this.ensurePromise = undefined;
+		}
+		return this.connectionState;
+	}
+
 	async setCloudCredentials(credentials: ILucosCloudCredentials): Promise<void> {
 		const response = await this.client.setCloudCredentials({
 			accessToken: credentials.accessToken,

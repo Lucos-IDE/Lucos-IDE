@@ -48,6 +48,13 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 		return this.nodeService.health();
 	}
 
+	async reconnect(): Promise<LucosConnectionState> {
+		const state = await this.nodeService.reconnect();
+		this._connectionState = state;
+		this._onDidChangeConnectionState.fire(state);
+		return state;
+	}
+
 	getAuthStatus(): Promise<ILucosAuthStatus> {
 		return this.nodeService.getAuthStatus();
 	}
@@ -118,6 +125,7 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 				}));
 				subscriptions.add(this.nodeService.onDynamicAgentTaskEvent(taskId)(event => {
 					if (event.kind === LucosTaskEventKind.TaskCompleted) {
+						source.emitOne(event);
 						source.resolve();
 						subscriptions.dispose();
 					} else if (event.kind === LucosTaskEventKind.Error) {

@@ -34,6 +34,12 @@ export interface ILucosDaemonService {
 	/** Daemon `Health` RPC - drives the status bar connection indicator (TW-169). */
 	health(): Promise<ILucosHealth>;
 
+	/**
+	 * Force a reconnect to the local daemon (adopt/spawn + health probe).
+	 * Returns the resulting connection state; does not throw on disconnect.
+	 */
+	reconnect(): Promise<LucosConnectionState>;
+
 	//#region Auth RPCs - map to daemon SetCloudCredentials/ClearCloudCredentials/GetAuthStatus (TW-190, done)
 	getAuthStatus(): Promise<ILucosAuthStatus>;
 	setCloudCredentials(credentials: ILucosCloudCredentials): Promise<void>;

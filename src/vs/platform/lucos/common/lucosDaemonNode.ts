@@ -21,6 +21,11 @@ export interface ILucosDaemonNodeService {
 	getAuthStatus(): Promise<ILucosAuthStatus>;
 
 	health(): Promise<ILucosHealth>;
+	/**
+	 * Re-run ensure/connect + health probe and fire connection-state changes.
+	 * Returns the resulting state; does not throw when the daemon stays offline.
+	 */
+	reconnect(): Promise<LucosConnectionState>;
 	setCloudCredentials(credentials: ILucosCloudCredentials): Promise<void>;
 	clearCloudCredentials(): Promise<void>;
 

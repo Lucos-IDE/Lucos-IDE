@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { LucosAuthState, LucosPermissionMode, LucosTaskEventKind } from '../../../../../platform/lucos/common/lucosProtocol.js';
+import { LucosAuthState, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../../platform/lucos/common/lucosProtocol.js';
 import { LucosDaemonServiceStub } from '../../browser/lucosDaemonServiceStub.js';
 
 suite('LucosDaemonServiceStub', () => {
@@ -67,6 +67,16 @@ suite('LucosDaemonServiceStub', () => {
 
 		await service.respondToPermission('task-1', 'tool-call-1', true);
 		await service.respondToPermission('task-1', 'tool-call-2', false, 'Not allowed');
+	});
+
+	test('reconnect reports Connected and fires connection state', async () => {
+		const service = disposables.add(new LucosDaemonServiceStub());
+		let fired: LucosConnectionState | undefined;
+		disposables.add(service.onDidChangeConnectionState(state => { fired = state; }));
+
+		const state = await service.reconnect();
+		assert.strictEqual(state, LucosConnectionState.Connected);
+		assert.strictEqual(fired, LucosConnectionState.Connected);
 	});
 
 	test('indexWorkspace streams start, progress and completion', async () => {

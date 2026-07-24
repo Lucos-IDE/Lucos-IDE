@@ -30,6 +30,12 @@ export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonSe
 		return { serving: true, version: 'stub' };
 	}
 
+	async reconnect(): Promise<LucosConnectionState> {
+		this._connectionState = LucosConnectionState.Connected;
+		this._onDidChangeConnectionState.fire(this._connectionState);
+		return this._connectionState;
+	}
+
 	async getAuthStatus(): Promise<ILucosAuthStatus> {
 		return this._authStatus;
 	}

@@ -163,9 +163,11 @@
 	color: var(--vscode-descriptionForeground);
 }
 
-.lucos-chat-welcome-icon {
-	font-size: 32px;
-	opacity: 0.6;
+.lucos-chat-welcome-icon,
+.lucos-chat-welcome-icon.codicon {
+	font-size: 32px !important;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.8;
 }
 
 .lucos-chat-welcome-title {
@@ -215,7 +217,8 @@
 	flex-direction: row-reverse;
 }
 
-.lucos-turn-avatar {
+.lucos-turn-avatar,
+.lucos-turn-avatar.codicon {
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -224,7 +227,7 @@
 	border-radius: 4px;
 	background: var(--vscode-badge-background);
 	color: var(--vscode-badge-foreground);
-	font-size: 12px;
+	font-size: 13px !important;
 }
 
 .lucos-turn-body {
@@ -285,49 +288,67 @@
 	width: 100%;
 }
 
-/* Streaming indicator */
-.lucos-typing {
-	display: none;
-	align-items: center;
-	gap: 4px;
-	padding: 2px 0;
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-}
-
-.lucos-typing.visible {
+/* Streaming / loading state */
+.lucos-assistant-skeleton {
 	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 4px 0 8px;
+	width: min(100%, 420px);
 }
 
-.lucos-typing-dots {
-	display: inline-flex;
-	gap: 3px;
+.lucos-assistant-skeleton-line {
+	height: 10px;
+	border-radius: 4px;
+	background: linear-gradient(
+		90deg,
+		var(--vscode-editorWidget-background) 0%,
+		var(--vscode-list-hoverBackground) 40%,
+		var(--vscode-editorWidget-background) 80%
+	);
+	background-size: 200% 100%;
+	animation: lucos-skeleton-shimmer 1.4s ease-in-out infinite;
 }
 
-.lucos-typing-dots span {
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	background: var(--vscode-descriptionForeground);
-	animation: lucos-typing-bounce 1.2s ease-in-out infinite;
+.lucos-assistant-skeleton-line:nth-child(1) {
+	width: 92%;
 }
 
-.lucos-typing-dots span:nth-child(2) {
-	animation-delay: 0.15s;
+.lucos-assistant-skeleton-line:nth-child(2) {
+	width: 76%;
+	animation-delay: 0.12s;
 }
 
-.lucos-typing-dots span:nth-child(3) {
-	animation-delay: 0.3s;
+.lucos-assistant-skeleton-line:nth-child(3) {
+	width: 58%;
+	animation-delay: 0.24s;
 }
 
-@keyframes lucos-typing-bounce {
-	0%, 60%, 100% {
-		opacity: 0.3;
-		transform: translateY(0);
+@keyframes lucos-skeleton-shimmer {
+	0% {
+		background-position: 100% 0;
 	}
-	30% {
+	100% {
+		background-position: -100% 0;
+	}
+}
+
+.lucos-streaming-caret {
+	display: inline-block;
+	width: 2px;
+	height: 1em;
+	margin-left: 2px;
+	vertical-align: text-bottom;
+	background: var(--vscode-editorCursor-foreground, var(--vscode-foreground));
+	animation: lucos-caret-blink 1s steps(1, end) infinite;
+}
+
+@keyframes lucos-caret-blink {
+	0%, 50% {
 		opacity: 1;
-		transform: translateY(-3px);
+	}
+	50.01%, 100% {
+		opacity: 0;
 	}
 }
 
@@ -674,16 +695,18 @@
 	white-space: nowrap;
 }
 
-.lucos-composer-dropdown-check {
+.lucos-composer-dropdown-check,
+.lucos-composer-dropdown-check.codicon {
 	flex-shrink: 0;
 	opacity: 0.9;
-	font-size: 12px;
+	font-size: 12px !important;
 }
 
-.lucos-mention-icon {
+.lucos-mention-icon,
+.lucos-mention-icon.codicon {
 	flex-shrink: 0;
 	opacity: 0.85;
-	font-size: 14px;
+	font-size: 14px !important;
 }
 
 .lucos-mention-desc {
@@ -724,6 +747,12 @@
 	color: var(--vscode-button-foreground);
 	cursor: pointer;
 	flex-shrink: 0;
+}
+
+.lucos-composer-send .codicon,
+.lucos-composer-send.codicon {
+	font-size: 14px !important;
+	color: inherit !important;
 }
 
 .lucos-composer-send:hover:not(:disabled) {
