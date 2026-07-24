@@ -160,6 +160,7 @@ async function main(buildDir?: string, outDir?: string): Promise<void> {
 	const appPath = path.join(appRoot, appName);
 	const dmgName = `Lucos-darwin-${arch}`;
 	const artifactPath = path.join(outDir, `${dmgName}.dmg`);
+	// Lucos-branded multi-res TIFF (regenerate via generate-dmg-background.py)
 	const backgroundPath = path.join(import.meta.dirname, `dmg-background-${quality}.tiff`);
 	const diskIconPath = path.join(root, 'resources', 'darwin', 'code.icns');
 	// Volume title becomes /Volumes/<title>. Keep Lucos branding — "VS Code"
