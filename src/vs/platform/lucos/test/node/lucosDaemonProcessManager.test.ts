@@ -128,4 +128,35 @@ suite('LucosDaemonProcessManager', () => {
 		const endpoint = await mgr.ensureRunning();
 		assert.strictEqual(endpoint, undefined);
 	});
+
+	test('notifies onOwnedDaemonExit when spawned child exits', async () => {
+		let exitNotices = 0;
+		let child: FakeChild | undefined;
+		const mgr = store.add(new LucosDaemonProcessManager(new NullLogService(), {
+			dataDir,
+			resolveBinary: () => '/bundle/lucos-daemon',
+			isHealthy: async () => false,
+			pollIntervalMs: 20,
+			pollTimeoutMs: 1000,
+			allocateHttpPort: async () => 19601,
+			onOwnedDaemonExit: () => { exitNotices++; },
+			spawnFn: ((bin: string) => {
+				spawnCalls.push(bin);
+				child = new FakeChild();
+				child.pid = 888;
+				queueMicrotask(() => writeDaemonJson(50222, 'exit-token', 888));
+				return child as unknown as ChildProcess;
+			}) as typeof import('child_process').spawn,
+		}));
+
+		const endpoint = await mgr.ensureRunning();
+		assert.ok(endpoint);
+		assert.strictEqual(mgr.ownsDaemon, true);
+
+		child!.kill('SIGTERM');
+		await new Promise(resolve => setTimeout(resolve, 20));
+
+		assert.strictEqual(exitNotices, 1);
+		assert.strictEqual(mgr.ownsDaemon, false);
+	});
 });

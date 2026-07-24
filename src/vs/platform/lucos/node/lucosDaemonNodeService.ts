@@ -11,7 +11,7 @@ import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
 import { ILucosDaemonNodeService } from '../common/lucosDaemonNode.js';
 import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../common/lucosProtocol.js';
-import { LucosGrpcClient } from './lucosGrpcClient.js';
+import { LucosGrpcClient, isLucosDaemonUnavailableError } from './lucosGrpcClient.js';
 import { resolveLucosDaemonBinaryPath } from './lucosDaemonPath.js';
 import { LucosDaemonProcessManager } from './lucosDaemonProcessManager.js';
 
@@ -59,10 +59,20 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 				try {
 					await this.client.connect(endpoint);
 					const health = await this.client.health();
-					return !!health.serving;
+					if (!health.serving) {
+						this.client.close();
+						return false;
+					}
+					return true;
 				} catch {
+					this.client.close();
 					return false;
 				}
+			},
+			onOwnedDaemonExit: () => {
+				this.logService.info('[lucosDaemon] Owned daemon exited; closing gRPC client');
+				this.client.close();
+				this.setConnectionState(LucosConnectionState.Disconnected);
 			},
 		}));
 
@@ -207,10 +217,38 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		if (!entry) {
 			return;
 		}
+		void this.attachStream(taskId, entry, /*allowRetry*/ true);
+	}
+
+	private async attachStream(taskId: string, entry: ITaskEntry, allowRetry: boolean): Promise<void> {
+		// Re-ensure before opening a stream — the unary health poll alone can leave a
+		// stale channel pointed at a dead ephemeral port after a daemon crash.
+		try {
+			await this.ensureConnectedForRpc();
+		} catch (error) {
+			entry.emitter.fire(errorEvent(taskId, error));
+			this.cleanupTask(taskId);
+			return;
+		}
+
 		let stream: GrpcReadableStream<Record<string, unknown>>;
 		try {
 			stream = entry.start();
 		} catch (error) {
+			if (allowRetry && isLucosDaemonUnavailableError(error)) {
+				this.logService.info('[lucosDaemon] Stream start UNAVAILABLE; reconnecting once');
+				this.client.close();
+				this.setConnectionState(LucosConnectionState.Disconnected);
+				try {
+					await this.ensureConnectedForRpc();
+					await this.attachStream(taskId, entry, /*allowRetry*/ false);
+					return;
+				} catch (retryError) {
+					entry.emitter.fire(errorEvent(taskId, retryError));
+					this.cleanupTask(taskId);
+					return;
+				}
+			}
 			entry.emitter.fire(errorEvent(taskId, error));
 			this.cleanupTask(taskId);
 			return;
@@ -222,6 +260,18 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 			this.cleanupTask(taskId);
 		});
 		stream.on('error', (error: Error) => {
+			if (allowRetry && isLucosDaemonUnavailableError(error) && this.tasks.has(taskId)) {
+				this.logService.info('[lucosDaemon] Stream UNAVAILABLE; reconnecting once');
+				try { stream.cancel(); } catch { /* ignore */ }
+				entry.stream = undefined;
+				this.client.close();
+				this.setConnectionState(LucosConnectionState.Disconnected);
+				void this.attachStream(taskId, entry, /*allowRetry*/ false).catch(retryError => {
+					entry.emitter.fire(errorEvent(taskId, retryError));
+					this.cleanupTask(taskId);
+				});
+				return;
+			}
 			entry.emitter.fire(errorEvent(taskId, error));
 			this.cleanupTask(taskId);
 		});
@@ -236,11 +286,30 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		}
 	}
 
+	private async ensureConnectedForRpc(): Promise<void> {
+		if (this.ensurePromise) {
+			await this.ensurePromise;
+		}
+		if (this.client.isConnected && this.connectionState === LucosConnectionState.Connected) {
+			return;
+		}
+		this.ensurePromise = this.ensureThenConnect();
+		try {
+			await this.ensurePromise;
+		} finally {
+			this.ensurePromise = undefined;
+		}
+		if (!this.client.isConnected || this.connectionState !== LucosConnectionState.Connected) {
+			throw new Error('Lucos daemon is not connected. Restart Lucos or check that the local daemon is running.');
+		}
+	}
+
 	private async ensureThenConnect(): Promise<void> {
 		this.setConnectionState(LucosConnectionState.Connecting);
 		try {
 			const endpoint = await this.processManager.ensureRunning();
 			if (!endpoint) {
+				this.client.close();
 				this.setConnectionState(LucosConnectionState.Disconnected);
 				return;
 			}
@@ -252,26 +321,9 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 			this.logService.info(`[lucosDaemon] Connected to ${endpoint.address} (serving=${!!response.serving})`);
 		} catch (error) {
 			this.logService.error('[lucosDaemon] Failed to ensure/connect daemon', error);
+			this.client.close();
 			this.setConnectionState(LucosConnectionState.Disconnected);
 		}
-	}
-
-	private tryConnect(): void {
-		const endpoint = this.processManager.readEndpoint();
-		if (!endpoint) {
-			this.setConnectionState(LucosConnectionState.Disconnected);
-			return;
-		}
-		void this.client.connect(endpoint).then(async () => {
-			try {
-				const response = await this.client.health();
-				this.setConnectionState(response.serving ? LucosConnectionState.Connected : LucosConnectionState.Disconnected);
-			} catch {
-				this.setConnectionState(LucosConnectionState.Disconnected);
-			}
-		}).catch(() => {
-			this.setConnectionState(LucosConnectionState.Disconnected);
-		});
 	}
 
 	private async refreshHealth(): Promise<void> {
@@ -285,23 +337,23 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		}
 
 		if (!this.client.isConnected) {
-			// When disconnected, prefer a full ensure (may spawn) over raw reconnect.
-			if (!this.processManager.ownsDaemon) {
-				this.ensurePromise = this.ensureThenConnect();
-				await this.ensurePromise;
-				this.ensurePromise = undefined;
-				return;
-			}
-			this.tryConnect();
+			// Adopt or spawn — tryConnect alone cannot recover from a dead ephemeral port
+			// left in daemon.json after a crash.
+			this.ensurePromise = this.ensureThenConnect();
+			await this.ensurePromise;
+			this.ensurePromise = undefined;
 			return;
 		}
 		try {
 			const response = await this.client.health();
 			this.setConnectionState(response.serving ? LucosConnectionState.Connected : LucosConnectionState.Disconnected);
-		} catch {
+		} catch (error) {
+			this.logService.info('[lucosDaemon] Health check failed; reconnecting', String(error));
+			this.client.close();
 			this.setConnectionState(LucosConnectionState.Disconnected);
-			// The daemon may have restarted with a rotated token — reconnect from daemon.json.
-			this.tryConnect();
+			this.ensurePromise = this.ensureThenConnect();
+			await this.ensurePromise;
+			this.ensurePromise = undefined;
 		}
 	}
 

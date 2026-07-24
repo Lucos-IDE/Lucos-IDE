@@ -33,6 +33,8 @@ export interface ILucosDaemonProcessManagerOptions {
 	readonly dataDir?: string;
 	readonly pollIntervalMs?: number;
 	readonly pollTimeoutMs?: number;
+	/** Fired when a daemon this manager spawned exits (so callers can drop gRPC clients). */
+	readonly onOwnedDaemonExit?: () => void;
 	/** Injected for tests. */
 	readonly spawnFn?: typeof spawn;
 	readonly allocateHttpPort?: () => Promise<number>;
@@ -193,6 +195,11 @@ export class LucosDaemonProcessManager extends Disposable {
 			if (this.ownedChild === child) {
 				this.ownedChild = undefined;
 				this.ownedPid = undefined;
+				try {
+					this.options.onOwnedDaemonExit?.();
+				} catch (callbackError) {
+					this.logService.error('[lucosDaemon] onOwnedDaemonExit failed', callbackError);
+				}
 			}
 		});
 		child.on('error', err => {

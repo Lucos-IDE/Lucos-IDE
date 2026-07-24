@@ -64,11 +64,25 @@ function ensureProtoOnDisk(): string {
 /** Default deadline for unary RPCs. Missing deadlines hang forever on a dead port. */
 const DEFAULT_UNARY_TIMEOUT_MS = 5_000;
 
+/** True for gRPC UNAVAILABLE / connection-refused failures against a dead localhost port. */
+export function isLucosDaemonUnavailableError(error: unknown): boolean {
+	if (!error || typeof error !== 'object') {
+		return false;
+	}
+	const err = error as { code?: number | string; message?: string; details?: string };
+	if (err.code === 14 || err.code === 'UNAVAILABLE') {
+		return true;
+	}
+	const message = `${err.message ?? ''} ${err.details ?? ''}`;
+	return /UNAVAILABLE|ECONNREFUSED|No connection established/i.test(message);
+}
+
 export class LucosGrpcClient extends Disposable {
 
 	private grpc: GrpcModule | undefined;
 	private client: GrpcClient | undefined;
 	private token = '';
+	private address = '';
 
 	async connect(endpoint: ILucosDaemonEndpoint): Promise<void> {
 		const [grpc, protoLoader] = await Promise.all([getGrpcModule(), getProtoLoaderModule()]);
@@ -88,10 +102,15 @@ export class LucosGrpcClient extends Disposable {
 		this.grpc = grpc;
 		this.client = new pkg.lucos.v1.LucosDaemon(endpoint.address, grpc.credentials.createInsecure());
 		this.token = endpoint.token;
+		this.address = endpoint.address;
 	}
 
 	get isConnected(): boolean {
 		return !!this.client;
+	}
+
+	get connectedAddress(): string | undefined {
+		return this.client ? this.address : undefined;
 	}
 
 	health(): Promise<{ serving?: boolean; version?: string }> {
@@ -151,6 +170,8 @@ export class LucosGrpcClient extends Disposable {
 			// ignore — best-effort teardown
 		}
 		this.client = undefined;
+		this.address = '';
+		this.token = '';
 	}
 
 	override dispose(): void {
