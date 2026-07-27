@@ -171,6 +171,11 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		await this.client.rejectPatch({ patchId });
 	}
 
+	async undoPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult> {
+		const response = await this.client.undoPatch({ patchId, workspaceRoot });
+		return { patchId: (response.patchId as string) ?? patchId, filesChanged: asStringArray(response.filesChanged) };
+	}
+
 	async listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations> {
 		try {
 			return mapCustomizations(await this.client.listCustomizations({ workspaceRoot }));

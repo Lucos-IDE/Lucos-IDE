@@ -83,6 +83,10 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 		return this.nodeService.rejectPatch(patchId);
 	}
 
+	undoPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult> {
+		return this.nodeService.undoPatch(patchId, workspaceRoot);
+	}
+
 	listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations> {
 		return this.nodeService.listCustomizations(workspaceRoot);
 	}

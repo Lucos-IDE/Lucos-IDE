@@ -41,6 +41,7 @@ suite('Lucos proto drift', () => {
 		'RespondToPermissionRequest',
 		'PatchProposal',
 		'ApplyPatchRequest',
+		'UndoPatchRequest',
 		'IndexWorkspaceRequest',
 	];
 

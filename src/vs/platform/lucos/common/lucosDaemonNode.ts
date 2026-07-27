@@ -43,6 +43,7 @@ export interface ILucosDaemonNodeService {
 	getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined>;
 	applyPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;
 	rejectPatch(patchId: string): Promise<void>;
+	undoPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;
 	//#endregion
 
 	/** Skills/agents discovered locally (TW-184). */

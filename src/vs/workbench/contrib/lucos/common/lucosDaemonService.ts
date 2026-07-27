@@ -63,6 +63,8 @@ export interface ILucosDaemonService {
 	applyPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;
 	/** Reject: discard the pending patch. */
 	rejectPatch(patchId: string): Promise<void>;
+	/** Undo: reverse a previously applied patch (conflict-checked against disk). */
+	undoPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;
 	//#endregion
 
 	/** List skills/agents the daemon discovered in the workspace (TW-184). */

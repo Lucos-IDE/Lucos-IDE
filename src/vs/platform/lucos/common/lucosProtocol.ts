@@ -153,7 +153,7 @@ export interface ILucosPatchProposal {
 	readonly status?: string;
 }
 
-/** Result of applying a patch (`ApplyPatchResponse`). */
+/** Result of applying or undoing a patch (`ApplyPatchResponse` / `UndoPatchResponse`). */
 export interface ILucosApplyPatchResult {
 	readonly patchId: string;
 	readonly filesChanged: readonly string[];

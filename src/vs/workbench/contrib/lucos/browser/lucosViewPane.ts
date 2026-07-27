@@ -42,6 +42,9 @@ import { LucosActivityTimeline } from './lucosActivityTimeline.js';
 import { LucosCommandApproval, permissionRequestFromTaskEvent } from './lucosCommandApproval.js';
 import { ILucosContextMention, ILucosStaticContextOption, LucosContextPicker, LucosStaticContextKind } from './lucosContextPicker.js';
 import { LucosPatchReview } from './lucosPatchReview.js';
+import { LucosFilesChangedSummary } from './lucosFilesChangedSummary.js';
+import { LucosFollowups, suggestLucosFollowups } from './lucosFollowups.js';
+import { fileChangeStatsFromPatch, findPatchFileChange } from '../common/lucosFileChangeStats.js';
 import { ILucosAuthModeService } from '../common/lucosAuthModeService.js';
 import { LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID } from './lucosSignInOverlay.js';
 
@@ -52,12 +55,21 @@ interface ITurnElements {
 	readonly turn: HTMLElement;
 	readonly body: HTMLElement;
 	readonly footer?: HTMLElement;
+	patchContainer?: HTMLElement;
+	permissionContainer?: HTMLElement;
+	filesChangedContainer?: HTMLElement;
+	followupsContainer?: HTMLElement;
 }
 
 interface ISessionUiState {
 	readonly shownPatchIds: Set<string>;
 	readonly shownPermissionIds: Set<string>;
+	/** Patches keyed by assistant message id (kept after Accept so Undo stays on that turn). */
+	readonly messagePatches: Map<string, ILucosPatchProposal>;
+	/** User goals keyed by assistant message id (for follow-up suggestions). */
+	readonly messageGoals: Map<string, string>;
 	pendingPatch?: ILucosPatchProposal;
+	pendingPatchMessageId?: string;
 	pendingPermission?: ILucosPermissionRequest;
 	streamingAssistantId?: string;
 }
@@ -120,6 +132,8 @@ export class LucosChatViewPane extends ViewPane {
 	private contextPicker!: LucosContextPicker;
 	private patchReview!: LucosPatchReview;
 	private commandApproval!: LucosCommandApproval;
+	private filesChangedSummary!: LucosFilesChangedSummary;
+	private followups!: LucosFollowups;
 	private readonly mentions: ILucosContextMention[] = [];
 	private readonly sessionUi = new Map<string, ISessionUiState>();
 
@@ -240,6 +254,8 @@ export class LucosChatViewPane extends ViewPane {
 		this.contextPicker = this.instantiationService.createInstance(LucosContextPicker);
 		this.patchReview = this._register(this.instantiationService.createInstance(LucosPatchReview));
 		this.commandApproval = this._register(this.instantiationService.createInstance(LucosCommandApproval));
+		this.filesChangedSummary = this._register(new LucosFilesChangedSummary());
+		this.followups = this._register(new LucosFollowups());
 
 		// Messages.
 		this.messagesContainer = dom.append(container, dom.$('.lucos-chat-messages'));
@@ -504,19 +520,27 @@ export class LucosChatViewPane extends ViewPane {
 		if (assistantId && this.turnElements.has(assistantId)) {
 			this.mountActiveTurnFooter(assistantId);
 		}
-		if (ui?.pendingPatch && this.activePatchContainer) {
-			this.patchReview.render(this.activePatchContainer, ui.pendingPatch, () => {
-				const state = this.getSessionUi(sessionId);
-				state.pendingPatch = undefined;
-				this.clearPatchReview();
-			});
-			this.activePatchContainer.classList.add('visible');
+
+		// Re-attach kept patch cards onto their original assistant turns (Accept → Undo).
+		if (ui) {
+			for (const [messageId, patch] of ui.messagePatches) {
+				this.renderPatchOnMessage(sessionId, messageId, patch);
+				this.renderTurnCompletionChrome(sessionId, messageId);
+			}
+			// Q&A turns (no patch) still restore follow-ups once the turn is fully done.
+			if (assistantId && !ui.streamingAssistantId && !ui.messagePatches.has(assistantId)) {
+				this.renderTurnCompletionChrome(sessionId, assistantId);
+			}
 		}
+
 		if (ui?.pendingPermission && this.activePermissionContainer) {
 			this.commandApproval.render(this.activePermissionContainer, ui.pendingPermission, () => {
 				const state = this.getSessionUi(sessionId);
 				state.pendingPermission = undefined;
 				this.clearCommandApproval();
+				if (assistantId) {
+					this.renderTurnCompletionChrome(sessionId, assistantId);
+				}
 			});
 			this.activePermissionContainer.classList.add('visible');
 		}
@@ -525,7 +549,12 @@ export class LucosChatViewPane extends ViewPane {
 	private getSessionUi(sessionId: string): ISessionUiState {
 		let state = this.sessionUi.get(sessionId);
 		if (!state) {
-			state = { shownPatchIds: new Set<string>(), shownPermissionIds: new Set<string>() };
+			state = {
+				shownPatchIds: new Set<string>(),
+				shownPermissionIds: new Set<string>(),
+				messagePatches: new Map(),
+				messageGoals: new Map(),
+			};
 			this.sessionUi.set(sessionId, state);
 		}
 		return state;
@@ -563,12 +592,24 @@ export class LucosChatViewPane extends ViewPane {
 
 		if (isActive()) {
 			this.timeline.clear();
-			this.clearPatchReview();
+			// Leave applied patch cards on prior turns (Undo). Only clear unresolved review UI.
+			if (!ui.pendingPatch || ui.pendingPatch.status !== 'applied') {
+				this.clearPatchReview();
+			}
 			this.clearCommandApproval();
+			// Only the latest completed turn should keep follow-up chips.
+			for (const turn of this.turnElements.values()) {
+				if (turn.followupsContainer) {
+					this.followups.clear(turn.followupsContainer);
+				}
+			}
 		}
 		ui.shownPatchIds.clear();
 		ui.shownPermissionIds.clear();
-		ui.pendingPatch = undefined;
+		if (!ui.pendingPatch || ui.pendingPatch.status !== 'applied') {
+			ui.pendingPatch = undefined;
+			ui.pendingPatchMessageId = undefined;
+		}
 		ui.pendingPermission = undefined;
 
 		// Snapshot prior turns before appending the new user/assistant messages.
@@ -577,6 +618,7 @@ export class LucosChatViewPane extends ViewPane {
 		this.conversationService.addMessage(LucosMessageRole.User, goal);
 		const assistant = this.conversationService.addMessage(LucosMessageRole.Assistant, '', true);
 		ui.streamingAssistantId = assistant.id;
+		ui.messageGoals.set(assistant.id, goal);
 		if (isActive()) {
 			this.mountActiveTurnFooter(assistant.id);
 		}
@@ -695,6 +737,7 @@ export class LucosChatViewPane extends ViewPane {
 			this.ensureAssistantSummary(assistant.id, sessionId, goal, completionSummary);
 			this.conversationService.completeMessage(assistant.id);
 			ui.streamingAssistantId = undefined;
+			this.renderTurnCompletionChrome(sessionId, assistant.id);
 			this.syncStreamingUi();
 		}
 	}
@@ -705,8 +748,102 @@ export class LucosChatViewPane extends ViewPane {
 			return;
 		}
 		this.timeline.mountTo(turn.footer);
-		this.activePatchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
-		this.activePermissionContainer = dom.append(turn.footer, dom.$('.lucos-chat-command-approval'));
+		if (!turn.patchContainer) {
+			turn.patchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
+		}
+		if (!turn.permissionContainer) {
+			turn.permissionContainer = dom.append(turn.footer, dom.$('.lucos-chat-command-approval'));
+		}
+		if (!turn.filesChangedContainer) {
+			turn.filesChangedContainer = dom.append(turn.footer, dom.$('.lucos-files-changed'));
+		}
+		if (!turn.followupsContainer) {
+			turn.followupsContainer = dom.append(turn.footer, dom.$('.lucos-followups'));
+		}
+		this.activePatchContainer = turn.patchContainer;
+		this.activePermissionContainer = turn.permissionContainer;
+	}
+
+	/**
+	 * Files Changed + follow-ups appear only after the turn is fully done and any
+	 * Accept/Reject (or command approval) actions are resolved. Pending patch review
+	 * hides both; after Accept we show the card; after Reject/Undo we show follow-ups only.
+	 */
+	private isTurnReadyForCompletionChrome(sessionId: string, messageId: string): boolean {
+		if (this.streamTokens.has(sessionId)) {
+			return false;
+		}
+		const ui = this.getSessionUi(sessionId);
+		if (ui.streamingAssistantId === messageId) {
+			return false;
+		}
+		if (ui.pendingPermission) {
+			return false;
+		}
+		const patch = ui.messagePatches.get(messageId)
+			?? (ui.pendingPatchMessageId === messageId ? ui.pendingPatch : undefined);
+		// Wait for Accept/Reject while a proposed patch is still unresolved.
+		if (patch && patch.status !== 'applied') {
+			return false;
+		}
+		return true;
+	}
+
+	private clearTurnCompletionChrome(messageId: string): void {
+		const turn = this.turnElements.get(messageId);
+		if (turn?.filesChangedContainer) {
+			this.filesChangedSummary.clear(turn.filesChangedContainer);
+		}
+		if (turn?.followupsContainer) {
+			this.followups.clear(turn.followupsContainer);
+		}
+	}
+
+	private renderTurnCompletionChrome(sessionId: string, messageId: string): void {
+		const turn = this.turnElements.get(messageId);
+		if (!turn?.footer) {
+			return;
+		}
+		if (!this.isTurnReadyForCompletionChrome(sessionId, messageId)) {
+			this.clearTurnCompletionChrome(messageId);
+			return;
+		}
+		if (!turn.filesChangedContainer) {
+			turn.filesChangedContainer = dom.append(turn.footer, dom.$('.lucos-files-changed'));
+		}
+		if (!turn.followupsContainer) {
+			turn.followupsContainer = dom.append(turn.footer, dom.$('.lucos-followups'));
+		}
+
+		const ui = this.getSessionUi(sessionId);
+		const patch = ui.messagePatches.get(messageId)
+			?? (ui.pendingPatchMessageId === messageId ? ui.pendingPatch : undefined);
+		// Only list files after Accept (applied). Reject/Undo leave no applied patch.
+		const files = patch?.status === 'applied' ? fileChangeStatsFromPatch(patch) : [];
+		const goal = ui.messageGoals.get(messageId) ?? '';
+
+		this.filesChangedSummary.render(turn.filesChangedContainer, files, {
+			onOpenFile: (path) => {
+				const change = findPatchFileChange(patch, path);
+				if (change) {
+					void this.patchReview.previewChange(change, patch?.status);
+				}
+			},
+			onReview: () => {
+				const first = patch?.fileChanges[0];
+				if (first) {
+					void this.patchReview.previewChange(first, patch?.status);
+				}
+			},
+		});
+
+		const suggestions = suggestLucosFollowups(goal, files);
+		this.followups.render(turn.followupsContainer, suggestions, followup => {
+			if (this.streamTokens.has(this.conversationService.activeSession.id)) {
+				return;
+			}
+			void this.runTask(followup.prompt);
+		});
 	}
 
 	private promptSignIn(): void {
@@ -1043,6 +1180,10 @@ export class LucosChatViewPane extends ViewPane {
 		}
 		ui.shownPatchIds.add(patchId);
 		ui.pendingPatch = patch;
+		ui.pendingPatchMessageId = assistantMessageId ?? ui.streamingAssistantId;
+		if (ui.pendingPatchMessageId) {
+			ui.messagePatches.set(ui.pendingPatchMessageId, patch);
+		}
 
 		if (assistantMessageId && !this.streamTokens.has(sessionId)) {
 			this.ensureAssistantSummary(assistantMessageId, sessionId, undefined, undefined);
@@ -1051,16 +1192,78 @@ export class LucosChatViewPane extends ViewPane {
 		if (this.conversationService.activeSession.id !== sessionId) {
 			return;
 		}
+		const messageId = ui.pendingPatchMessageId;
+		if (messageId) {
+			this.renderPatchOnMessage(sessionId, messageId, patch);
+			// Proposed patches require Accept/Reject first — hide Files Changed / follow-ups until then.
+			this.clearTurnCompletionChrome(messageId);
+			this.scrollToBottom();
+			return;
+		}
 		const container = this.activePatchContainer;
 		if (!container) {
 			return;
 		}
-		this.patchReview.render(container, patch, () => {
-			ui.pendingPatch = undefined;
-			this.clearPatchReview();
-		});
+		this.patchReview.render(container, patch, this.patchCallbacks(sessionId, undefined));
 		container.classList.add('visible');
 		this.scrollToBottom();
+	}
+
+	private patchCallbacks(sessionId: string, messageId: string | undefined) {
+		return {
+			onResolved: () => {
+				const state = this.getSessionUi(sessionId);
+				if (messageId) {
+					state.messagePatches.delete(messageId);
+					this.renderTurnCompletionChrome(sessionId, messageId);
+				}
+				if (state.pendingPatchMessageId === messageId) {
+					state.pendingPatch = undefined;
+					state.pendingPatchMessageId = undefined;
+				}
+				this.clearPatchReview();
+			},
+			onApplied: (applied: ILucosPatchProposal) => {
+				const state = this.getSessionUi(sessionId);
+				state.pendingPatch = applied;
+				if (messageId) {
+					state.messagePatches.set(messageId, applied);
+					state.pendingPatchMessageId = messageId;
+					this.renderTurnCompletionChrome(sessionId, messageId);
+				}
+				// Detach active container so the next turn's clearPatchReview won't wipe Undo.
+				if (this.activePatchContainer) {
+					this.activePatchContainer = undefined;
+				}
+			},
+			onReverted: (_patch: ILucosPatchProposal) => {
+				const state = this.getSessionUi(sessionId);
+				if (messageId) {
+					state.messagePatches.delete(messageId);
+					this.renderTurnCompletionChrome(sessionId, messageId);
+				}
+				if (state.pendingPatchMessageId === messageId) {
+					state.pendingPatch = undefined;
+					state.pendingPatchMessageId = undefined;
+				}
+			},
+		};
+	}
+
+	private renderPatchOnMessage(sessionId: string, messageId: string, patch: ILucosPatchProposal): void {
+		const turn = this.turnElements.get(messageId);
+		if (!turn?.footer) {
+			return;
+		}
+		if (!turn.patchContainer) {
+			turn.patchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
+		}
+		const container = turn.patchContainer;
+		if (patch.status !== 'applied' && this.conversationService.activeSession.id === sessionId) {
+			this.activePatchContainer = container;
+		}
+		this.patchReview.render(container, patch, this.patchCallbacks(sessionId, messageId));
+		container.classList.add('visible');
 	}
 
 	private showPermission(sessionId: string, request: ILucosPermissionRequest): void {
@@ -1085,6 +1288,11 @@ export class LucosChatViewPane extends ViewPane {
 		this.commandApproval.render(container, request, () => {
 			ui.pendingPermission = undefined;
 			this.clearCommandApproval();
+			const messageId = ui.streamingAssistantId
+				?? [...this.conversationService.activeSession.messages].reverse().find(m => m.role === LucosMessageRole.Assistant)?.id;
+			if (messageId) {
+				this.renderTurnCompletionChrome(sessionId, messageId);
+			}
 		});
 		container.classList.add('visible');
 		this.scrollToBottom();

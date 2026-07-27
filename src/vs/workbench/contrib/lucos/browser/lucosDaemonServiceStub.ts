@@ -70,6 +70,10 @@ export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonSe
 		// no-op in the stub
 	}
 
+	async undoPatch(patchId: string): Promise<ILucosApplyPatchResult> {
+		return { patchId, filesChanged: [] };
+	}
+
 	async listCustomizations(): Promise<ILucosCustomizations> {
 		return { skills: [], agents: [] };
 	}
