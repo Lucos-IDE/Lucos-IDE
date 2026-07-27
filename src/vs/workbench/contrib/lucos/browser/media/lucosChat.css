@@ -409,7 +409,8 @@
 }
 
 .lucos-patch-accept,
-.lucos-patch-reject {
+.lucos-patch-reject,
+.lucos-patch-undo {
 	padding: 4px 12px;
 	border-radius: 4px;
 	border: 1px solid var(--vscode-button-border, transparent);
@@ -422,7 +423,8 @@
 	color: var(--vscode-button-foreground);
 }
 
-.lucos-patch-reject {
+.lucos-patch-reject,
+.lucos-patch-undo {
 	background: transparent;
 	color: var(--vscode-foreground);
 	border-color: var(--vscode-panel-border);

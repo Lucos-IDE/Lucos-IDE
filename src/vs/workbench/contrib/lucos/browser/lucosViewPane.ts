@@ -52,12 +52,17 @@ interface ITurnElements {
 	readonly turn: HTMLElement;
 	readonly body: HTMLElement;
 	readonly footer?: HTMLElement;
+	patchContainer?: HTMLElement;
+	permissionContainer?: HTMLElement;
 }
 
 interface ISessionUiState {
 	readonly shownPatchIds: Set<string>;
 	readonly shownPermissionIds: Set<string>;
+	/** Patches keyed by assistant message id (kept after Accept so Undo stays on that turn). */
+	readonly messagePatches: Map<string, ILucosPatchProposal>;
 	pendingPatch?: ILucosPatchProposal;
+	pendingPatchMessageId?: string;
 	pendingPermission?: ILucosPermissionRequest;
 	streamingAssistantId?: string;
 }
@@ -504,14 +509,14 @@ export class LucosChatViewPane extends ViewPane {
 		if (assistantId && this.turnElements.has(assistantId)) {
 			this.mountActiveTurnFooter(assistantId);
 		}
-		if (ui?.pendingPatch && this.activePatchContainer) {
-			this.patchReview.render(this.activePatchContainer, ui.pendingPatch, () => {
-				const state = this.getSessionUi(sessionId);
-				state.pendingPatch = undefined;
-				this.clearPatchReview();
-			});
-			this.activePatchContainer.classList.add('visible');
+
+		// Re-attach kept patch cards onto their original assistant turns (Accept → Undo).
+		if (ui) {
+			for (const [messageId, patch] of ui.messagePatches) {
+				this.renderPatchOnMessage(sessionId, messageId, patch);
+			}
 		}
+
 		if (ui?.pendingPermission && this.activePermissionContainer) {
 			this.commandApproval.render(this.activePermissionContainer, ui.pendingPermission, () => {
 				const state = this.getSessionUi(sessionId);
@@ -525,7 +530,7 @@ export class LucosChatViewPane extends ViewPane {
 	private getSessionUi(sessionId: string): ISessionUiState {
 		let state = this.sessionUi.get(sessionId);
 		if (!state) {
-			state = { shownPatchIds: new Set<string>(), shownPermissionIds: new Set<string>() };
+			state = { shownPatchIds: new Set<string>(), shownPermissionIds: new Set<string>(), messagePatches: new Map() };
 			this.sessionUi.set(sessionId, state);
 		}
 		return state;
@@ -563,12 +568,18 @@ export class LucosChatViewPane extends ViewPane {
 
 		if (isActive()) {
 			this.timeline.clear();
-			this.clearPatchReview();
+			// Leave applied patch cards on prior turns (Undo). Only clear unresolved review UI.
+			if (!ui.pendingPatch || ui.pendingPatch.status !== 'applied') {
+				this.clearPatchReview();
+			}
 			this.clearCommandApproval();
 		}
 		ui.shownPatchIds.clear();
 		ui.shownPermissionIds.clear();
-		ui.pendingPatch = undefined;
+		if (!ui.pendingPatch || ui.pendingPatch.status !== 'applied') {
+			ui.pendingPatch = undefined;
+			ui.pendingPatchMessageId = undefined;
+		}
 		ui.pendingPermission = undefined;
 
 		// Snapshot prior turns before appending the new user/assistant messages.
@@ -705,8 +716,14 @@ export class LucosChatViewPane extends ViewPane {
 			return;
 		}
 		this.timeline.mountTo(turn.footer);
-		this.activePatchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
-		this.activePermissionContainer = dom.append(turn.footer, dom.$('.lucos-chat-command-approval'));
+		if (!turn.patchContainer) {
+			turn.patchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
+		}
+		if (!turn.permissionContainer) {
+			turn.permissionContainer = dom.append(turn.footer, dom.$('.lucos-chat-command-approval'));
+		}
+		this.activePatchContainer = turn.patchContainer;
+		this.activePermissionContainer = turn.permissionContainer;
 	}
 
 	private promptSignIn(): void {
@@ -1043,6 +1060,10 @@ export class LucosChatViewPane extends ViewPane {
 		}
 		ui.shownPatchIds.add(patchId);
 		ui.pendingPatch = patch;
+		ui.pendingPatchMessageId = assistantMessageId ?? ui.streamingAssistantId;
+		if (ui.pendingPatchMessageId) {
+			ui.messagePatches.set(ui.pendingPatchMessageId, patch);
+		}
 
 		if (assistantMessageId && !this.streamTokens.has(sessionId)) {
 			this.ensureAssistantSummary(assistantMessageId, sessionId, undefined, undefined);
@@ -1051,16 +1072,73 @@ export class LucosChatViewPane extends ViewPane {
 		if (this.conversationService.activeSession.id !== sessionId) {
 			return;
 		}
+		const messageId = ui.pendingPatchMessageId;
+		if (messageId) {
+			this.renderPatchOnMessage(sessionId, messageId, patch);
+			this.scrollToBottom();
+			return;
+		}
 		const container = this.activePatchContainer;
 		if (!container) {
 			return;
 		}
-		this.patchReview.render(container, patch, () => {
-			ui.pendingPatch = undefined;
-			this.clearPatchReview();
-		});
+		this.patchReview.render(container, patch, this.patchCallbacks(sessionId, undefined));
 		container.classList.add('visible');
 		this.scrollToBottom();
+	}
+
+	private patchCallbacks(sessionId: string, messageId: string | undefined) {
+		return {
+			onResolved: () => {
+				const state = this.getSessionUi(sessionId);
+				if (messageId) {
+					state.messagePatches.delete(messageId);
+				}
+				if (state.pendingPatchMessageId === messageId) {
+					state.pendingPatch = undefined;
+					state.pendingPatchMessageId = undefined;
+				}
+				this.clearPatchReview();
+			},
+			onApplied: (applied: ILucosPatchProposal) => {
+				const state = this.getSessionUi(sessionId);
+				state.pendingPatch = applied;
+				if (messageId) {
+					state.messagePatches.set(messageId, applied);
+					state.pendingPatchMessageId = messageId;
+				}
+				// Detach active container so the next turn's clearPatchReview won't wipe Undo.
+				if (this.activePatchContainer) {
+					this.activePatchContainer = undefined;
+				}
+			},
+			onReverted: (_patch: ILucosPatchProposal) => {
+				const state = this.getSessionUi(sessionId);
+				if (messageId) {
+					state.messagePatches.delete(messageId);
+				}
+				if (state.pendingPatchMessageId === messageId) {
+					state.pendingPatch = undefined;
+					state.pendingPatchMessageId = undefined;
+				}
+			},
+		};
+	}
+
+	private renderPatchOnMessage(sessionId: string, messageId: string, patch: ILucosPatchProposal): void {
+		const turn = this.turnElements.get(messageId);
+		if (!turn?.footer) {
+			return;
+		}
+		if (!turn.patchContainer) {
+			turn.patchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
+		}
+		const container = turn.patchContainer;
+		if (patch.status !== 'applied' && this.conversationService.activeSession.id === sessionId) {
+			this.activePatchContainer = container;
+		}
+		this.patchReview.render(container, patch, this.patchCallbacks(sessionId, messageId));
+		container.classList.add('visible');
 	}
 
 	private showPermission(sessionId: string, request: ILucosPermissionRequest): void {
