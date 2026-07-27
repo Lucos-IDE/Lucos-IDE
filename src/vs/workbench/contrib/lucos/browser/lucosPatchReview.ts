@@ -43,6 +43,20 @@ export class LucosPatchReview extends Disposable {
 		title.textContent = patch.summary || localize('lucos.patch.proposed', "Proposed changes");
 
 		for (const change of patch.fileChanges) {
+			if (this.isNewFileChange(change)) {
+				const row = dom.append(card, dom.$('.lucos-patch-file.lucos-patch-file-new'));
+				row.textContent = localize(
+					'lucos.patch.newFileLabel',
+					"{0} (new — preview after Accept)",
+					change.path,
+				);
+				row.title = localize(
+					'lucos.patch.newFileHint',
+					"This file does not exist yet. Accept the patch to create it, then open it from the explorer.",
+				);
+				continue;
+			}
+
 			const link = dom.append(card, dom.$('a.lucos-patch-file')) as HTMLAnchorElement;
 			link.textContent = change.path;
 			this._register(dom.addDisposableListener(link, 'click', () => void this.openDiff(change)));
@@ -82,15 +96,43 @@ export class LucosPatchReview extends Disposable {
 		this._register(dom.addDisposableListener(undoButton, 'click', () => void this.undo(patch, actions, status, callbacks)));
 	}
 
+	private isNewFileChange(change: ILucosFileChange): boolean {
+		// Matches daemon create semantics: empty old_text + non-empty new_text.
+		return !change.oldText && !!change.newText;
+	}
+
 	private async openDiff(change: ILucosFileChange): Promise<void> {
+		if (this.isNewFileChange(change)) {
+			this.notificationService.notify({
+				severity: Severity.Info,
+				message: localize(
+					'lucos.patch.newFilePreviewBlocked',
+					"Preview is unavailable until the file is created. Accept the patch first.",
+				),
+			});
+			return;
+		}
+
 		const original = URI.from({ scheme: 'lucos-patch', path: change.path, query: 'side=original' });
 		const modified = URI.from({ scheme: 'lucos-patch', path: change.path, query: 'side=modified' });
-		await this.editorService.openEditor({
-			original: { resource: original, contents: change.oldText },
-			modified: { resource: modified, contents: change.newText },
-			label: localize('lucos.patch.diffLabel', "Lucos Review: {0}", change.path),
-			options: { pinned: true },
-		});
+		try {
+			await this.editorService.openEditor({
+				original: { resource: original, contents: change.oldText },
+				modified: { resource: modified, contents: change.newText },
+				label: localize('lucos.patch.diffLabel', "Lucos Review: {0}", change.path),
+				options: { pinned: true },
+			});
+		} catch (error) {
+			this.notificationService.notify({
+				severity: Severity.Error,
+				message: localize(
+					'lucos.patch.diffOpenFailed',
+					"Failed to open patch preview for {0}: {1}",
+					change.path,
+					error instanceof Error ? error.message : String(error),
+				),
+			});
+		}
 	}
 
 	private async accept(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement, callbacks: ILucosPatchReviewCallbacks): Promise<void> {

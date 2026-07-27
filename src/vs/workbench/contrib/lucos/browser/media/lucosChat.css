@@ -402,6 +402,12 @@
 	color: var(--vscode-textLink-foreground);
 }
 
+.lucos-patch-file-new {
+	cursor: default;
+	text-decoration: none;
+	color: var(--vscode-descriptionForeground);
+}
+
 .lucos-patch-actions {
 	margin-top: 8px;
 	display: flex;
