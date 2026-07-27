@@ -286,6 +286,8 @@
 .lucos-turn-footer {
 	max-width: 92%;
 	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
 }
 
 /* Streaming / loading state */
@@ -371,6 +373,9 @@
 /* Patch slot */
 .lucos-chat-patch {
 	display: none;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
 }
 
 .lucos-chat-patch.visible {
@@ -385,12 +390,18 @@
 	background: var(--vscode-editor-background);
 	user-select: text;
 	-webkit-user-select: text;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	overflow: hidden;
 }
 
 .lucos-patch-title {
 	font-weight: 600;
 	margin-bottom: 6px;
 	font-size: 13px;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .lucos-patch-file {
@@ -400,6 +411,32 @@
 	font-size: 12px;
 	margin: 2px 0;
 	color: var(--vscode-textLink-foreground);
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.lucos-patch-file-row {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	max-width: 100%;
+	min-width: 0;
+	margin: 2px 0;
+}
+
+.lucos-patch-file-row .lucos-patch-file {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 0;
+}
+
+.lucos-patch-file-badge {
+	flex: 0 0 auto;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
 }
 
 .lucos-patch-file-new {
@@ -411,7 +448,14 @@
 .lucos-patch-actions {
 	margin-top: 8px;
 	display: flex;
+	flex-wrap: wrap;
 	gap: 8px;
+	max-width: 100%;
+}
+
+.lucos-patch-status {
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .lucos-patch-accept,
@@ -422,6 +466,8 @@
 	border: 1px solid var(--vscode-button-border, transparent);
 	cursor: pointer;
 	font-size: 12px;
+	flex: 0 1 auto;
+	max-width: 100%;
 }
 
 .lucos-patch-accept {
@@ -453,12 +499,18 @@
 	background: var(--vscode-editor-background);
 	user-select: text;
 	-webkit-user-select: text;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	overflow: hidden;
 }
 
 .lucos-command-title {
 	font-weight: 600;
 	margin-bottom: 6px;
 	font-size: 13px;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .lucos-command-preview {
@@ -483,8 +535,10 @@
 
 .lucos-command-actions {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 8px;
 	margin-top: 8px;
+	max-width: 100%;
 }
 
 .lucos-command-approve,

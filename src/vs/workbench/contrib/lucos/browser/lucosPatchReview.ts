@@ -12,6 +12,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { ILucosFileChange, ILucosPatchProposal } from '../../../../platform/lucos/common/lucosProtocol.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
+import { makeLucosPatchUri, setLucosPatchContent } from './lucosPatchContentProvider.js';
 
 export interface ILucosPatchReviewCallbacks {
 	/** Called when Accept/Reject/Undo finishes and the card should leave session chrome. */
@@ -42,24 +43,28 @@ export class LucosPatchReview extends Disposable {
 		const title = dom.append(card, dom.$('.lucos-patch-title'));
 		title.textContent = patch.summary || localize('lucos.patch.proposed', "Proposed changes");
 
+		const reviewState = { status: patch.status };
+
 		for (const change of patch.fileChanges) {
-			if (this.isNewFileChange(change)) {
-				const row = dom.append(card, dom.$('.lucos-patch-file.lucos-patch-file-new'));
-				row.textContent = localize(
-					'lucos.patch.newFileLabel',
-					"{0} (new — preview after Accept)",
-					change.path,
+			if (this.isNewFileChange(change) && reviewState.status !== 'applied') {
+				const row = dom.append(card, dom.$('.lucos-patch-file-row'));
+				const pathEl = dom.append(row, dom.$('a.lucos-patch-file')) as HTMLAnchorElement;
+				pathEl.textContent = change.path;
+				pathEl.title = localize(
+					'lucos.patch.newFilePreviewTitle',
+					"Preview proposed new file (not on disk until Accept)",
 				);
-				row.title = localize(
-					'lucos.patch.newFileHint',
-					"This file does not exist yet. Accept the patch to create it, then open it from the explorer.",
-				);
+				this._register(dom.addDisposableListener(pathEl, 'click', () => void this.openDiff(change, reviewState)));
+				const badge = dom.append(row, dom.$('span.lucos-patch-file-badge'));
+				badge.textContent = localize('lucos.patch.newFileBadge', "new");
+				badge.title = localize('lucos.patch.newFilePreviewHint', "Preview proposed contents");
 				continue;
 			}
 
 			const link = dom.append(card, dom.$('a.lucos-patch-file')) as HTMLAnchorElement;
 			link.textContent = change.path;
-			this._register(dom.addDisposableListener(link, 'click', () => void this.openDiff(change)));
+			link.title = change.path;
+			this._register(dom.addDisposableListener(link, 'click', () => void this.openDiff(change, reviewState)));
 		}
 
 		const actions = dom.append(card, dom.$('.lucos-patch-actions'));
@@ -67,13 +72,13 @@ export class LucosPatchReview extends Disposable {
 		status.style.marginTop = '4px';
 		status.style.opacity = '0.8';
 
-		if (patch.status === 'applied') {
+		if (reviewState.status === 'applied') {
 			this.renderUndoActions(patch, actions, status, callbacks);
 			status.textContent = localize('lucos.patch.appliedReady', "Applied — you can undo these changes.");
 			return;
 		}
 
-		if (patch.status === 'reverted') {
+		if (reviewState.status === 'reverted') {
 			actions.style.display = 'none';
 			status.textContent = localize('lucos.patch.reverted', "Reverted.");
 			return;
@@ -84,7 +89,7 @@ export class LucosPatchReview extends Disposable {
 		const rejectButton = dom.append(actions, dom.$('button.lucos-patch-reject')) as HTMLButtonElement;
 		rejectButton.textContent = localize('lucos.patch.reject', "Reject");
 
-		this._register(dom.addDisposableListener(acceptButton, 'click', () => void this.accept(patch, actions, status, callbacks)));
+		this._register(dom.addDisposableListener(acceptButton, 'click', () => void this.accept(patch, actions, status, callbacks, reviewState)));
 		this._register(dom.addDisposableListener(rejectButton, 'click', () => void this.reject(patch, actions, status, callbacks)));
 	}
 
@@ -101,24 +106,51 @@ export class LucosPatchReview extends Disposable {
 		return !change.oldText && !!change.newText;
 	}
 
-	private async openDiff(change: ILucosFileChange): Promise<void> {
-		if (this.isNewFileChange(change)) {
-			this.notificationService.notify({
-				severity: Severity.Info,
-				message: localize(
-					'lucos.patch.newFilePreviewBlocked',
-					"Preview is unavailable until the file is created. Accept the patch first.",
-				),
-			});
+	private workspaceFileUri(path: string): URI | undefined {
+		const folder = this.workspaceContextService.getWorkspace().folders[0];
+		if (!folder) {
+			return undefined;
+		}
+		return URI.joinPath(folder.uri, path);
+	}
+
+	private async openDiff(change: ILucosFileChange, reviewState?: { status?: string }): Promise<void> {
+		const status = reviewState?.status;
+		// After Accept, open the real workspace file — the synthetic review URI is for pending diffs.
+		if (status === 'applied') {
+			const resource = this.workspaceFileUri(change.path);
+			if (!resource) {
+				this.notificationService.notify({
+					severity: Severity.Error,
+					message: localize('lucos.patch.noWorkspace', "No workspace folder is open."),
+				});
+				return;
+			}
+			try {
+				await this.editorService.openEditor({ resource, options: { pinned: true } });
+			} catch (error) {
+				this.notificationService.notify({
+					severity: Severity.Error,
+					message: localize(
+						'lucos.patch.openFileFailed',
+						"Failed to open {0}: {1}",
+						change.path,
+						error instanceof Error ? error.message : String(error),
+					),
+				});
+			}
 			return;
 		}
 
-		const original = URI.from({ scheme: 'lucos-patch', path: change.path, query: 'side=original' });
-		const modified = URI.from({ scheme: 'lucos-patch', path: change.path, query: 'side=modified' });
+		const original = makeLucosPatchUri(change.path, 'original');
+		const modified = makeLucosPatchUri(change.path, 'modified');
+		setLucosPatchContent(original, change.oldText ?? '');
+		setLucosPatchContent(modified, change.newText ?? '');
+
 		try {
 			await this.editorService.openEditor({
-				original: { resource: original, contents: change.oldText },
-				modified: { resource: modified, contents: change.newText },
+				original: { resource: original },
+				modified: { resource: modified },
 				label: localize('lucos.patch.diffLabel', "Lucos Review: {0}", change.path),
 				options: { pinned: true },
 			});
@@ -135,10 +167,17 @@ export class LucosPatchReview extends Disposable {
 		}
 	}
 
-	private async accept(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement, callbacks: ILucosPatchReviewCallbacks): Promise<void> {
+	private async accept(
+		patch: ILucosPatchProposal,
+		actions: HTMLElement,
+		status: HTMLElement,
+		callbacks: ILucosPatchReviewCallbacks,
+		reviewState: { status?: string },
+	): Promise<void> {
 		const workspaceRoot = this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath ?? '';
 		try {
 			const result = await this.lucosDaemonService.applyPatch(patch.patchId, workspaceRoot);
+			reviewState.status = 'applied';
 			const applied: ILucosPatchProposal = { ...patch, status: 'applied' };
 			status.textContent = localize('lucos.patch.applied', "Applied — {0} file(s) changed.", result.filesChanged.length);
 			this.renderUndoActions(applied, actions, status, callbacks);

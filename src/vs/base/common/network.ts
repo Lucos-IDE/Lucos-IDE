@@ -161,6 +161,11 @@ export namespace Schemas {
 	export const chatEditingModel = 'chat-editing-text-model';
 
 	/**
+	 * Virtual side-by-side content for Lucos patch review diffs.
+	 */
+	export const lucosPatch = 'lucos-patch';
+
+	/**
 	 * Used for rendering multidiffs in copilot agent sessions
 	 */
 	export const copilotPr = 'copilot-pr';
