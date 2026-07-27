@@ -101,6 +101,11 @@ export class LucosPatchReview extends Disposable {
 		this._register(dom.addDisposableListener(undoButton, 'click', () => void this.undo(patch, actions, status, callbacks)));
 	}
 
+	/** Open a patch file preview (or the real file after Accept). */
+	previewChange(change: ILucosFileChange, status?: string): Promise<void> {
+		return this.openDiff(change, { status });
+	}
+
 	private isNewFileChange(change: ILucosFileChange): boolean {
 		// Matches daemon create semantics: empty old_text + non-empty new_text.
 		return !change.oldText && !!change.newText;
