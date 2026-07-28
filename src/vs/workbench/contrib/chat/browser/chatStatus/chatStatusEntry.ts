@@ -26,7 +26,6 @@ import product from '../../../../../platform/product/common/product.js';
 import { isCompletionsEnabled } from '../../../../../editor/common/services/completionsEnablement.js';
 import { CHAT_SETUP_ACTION_ID } from '../actions/chatActions.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
-import { isWeb } from '../../../../../base/common/platform.js';
 import { InEditorZenModeContext } from '../../../../common/contextkeys.js';
 import { ChatConfiguration } from '../../common/constants.js';
 
@@ -167,12 +166,12 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	private update(): void {
 		const sentiment = this.chatEntitlementService.sentiment;
 		if (!sentiment.hidden) {
-			const props = this.getEntryProps();
-			if (this.entry) {
-				this.entry.update(props);
-			} else {
-				this.entry = this.statusbarService.addEntry(props, 'chat.statusBarEntry', StatusbarAlignment.RIGHT, { location: { id: 'status.editor.mode', priority: 100.1 }, alignment: StatusbarAlignment.RIGHT });
-			}
+			// const props = this.getEntryProps();
+			// if (this.entry) {
+			// 	this.entry.update(props);
+			// } else {
+			// 	this.entry = this.statusbarService.addEntry(props, 'chat.statusBarEntry', StatusbarAlignment.RIGHT, { location: { id: 'status.editor.mode', priority: 100.1 }, alignment: StatusbarAlignment.RIGHT });
+			// }
 		} else {
 			this.entry?.dispose();
 			this.entry = undefined;
@@ -344,7 +343,7 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 				isProUser(entitlement) ||						// user is already pro
 				entitlement === ChatEntitlement.Free			// user is already free
 			) {
-				return this.getSetupEntryProps();
+				// return this.getSetupEntryProps();
 			}
 		} else {
 			const quotas = this.chatEntitlementService.quotas;
@@ -358,7 +357,7 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 			// Signed out — keep showing Sign-in affordance even when BYOK models are present
 			// so air-gapped users can still authenticate to unlock the full Copilot experience.
 			else if (this.chatEntitlementService.entitlement === ChatEntitlement.Unknown) {
-				return this.getSetupEntryProps();
+				// return this.getSetupEntryProps();
 			}
 
 			// Quota Exceeded (all tracked plans share the premium chat quota)
@@ -405,45 +404,15 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	}
 
 	private getSetupEntryProps(): IStatusbarEntry {
-		const showSignInLabel = !this.isSignInTitleBarAffordanceVisible();
-		const signInLabel = localize('signIn', "Sign In");
 		return {
 			name: localize('chatStatus', "Lucos AI Status"),
-			text: showSignInLabel ? `$(sparkle) ${signInLabel}` : '$(sparkle)',
-			ariaLabel: showSignInLabel ? signInLabel : localize('chatStatusAria', "Lucos AI status"),
+			text: '$(sparkle)',
+			ariaLabel: localize('chatStatusAria', "Lucos AI status"),
 			command: CHAT_SETUP_ACTION_ID,
 			showInAllWindows: true,
 			kind: undefined,
 			content: this.entryAnchor,
 		};
-	}
-
-	private isSignInTitleBarAffordanceVisible(): boolean {
-		if (isWeb) {
-			return false;
-		}
-
-		// Title bar sign-in button only shows when user is signed out
-		if (this.chatEntitlementService.entitlement !== ChatEntitlement.Unknown) {
-			return false;
-		}
-
-		if (this.chatEntitlementService.sentiment.hidden || this.chatEntitlementService.sentiment.disabledInWorkspace) {
-			return false;
-		}
-
-		const hasTitleBarUpdate = Boolean(this.contextKeyService.getContextKeyValue('updateTitleBar'));
-		if (hasTitleBarUpdate) {
-			return false;
-		}
-
-		const inZenMode = Boolean(this.contextKeyService.getContextKeyValue(InEditorZenModeContext.key));
-		if (inZenMode) {
-			return false;
-		}
-
-		const signInTitleBarEnabled = this.configurationService.getValue<boolean>(ChatConfiguration.TitleBarSignInEnabled) !== false;
-		return signInTitleBarEnabled;
 	}
 
 	override dispose(): void {
