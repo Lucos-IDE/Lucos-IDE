@@ -50,6 +50,9 @@ export interface ILucosConversationService {
 	/** Append a streamed delta to an existing message and fire an update. */
 	appendToMessage(messageId: string, delta: string): void;
 
+	/** Replace an existing message's content and fire an update. */
+	replaceMessageContent(messageId: string, content: string): void;
+
 	/** Mark a message's streaming as finished. */
 	completeMessage(messageId: string): void;
 }

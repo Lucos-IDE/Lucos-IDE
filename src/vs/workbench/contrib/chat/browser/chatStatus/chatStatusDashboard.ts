@@ -162,8 +162,8 @@ export class ChatStatusDashboard extends DomWidget {
 			const headerHost = this.options?.titleHeaderContainer ?? this.element;
 			const header = this.renderHeader(headerHost, this._store, planName, toAction({
 				id: 'workbench.action.manageCopilot',
-				label: localize('quotaLabel', "Manage Copilot Settings"),
-				tooltip: localize('quotaTooltip', "Manage Copilot Settings"),
+				label: localize('quotaLabel', "Manage Lucos AI Settings"),
+				tooltip: localize('quotaTooltip', "Manage Lucos AI Settings"),
 				class: ThemeIcon.asClassName(Codicon.settings),
 				run: () => this.runCommandAndClose(() => this.openerService.open(URI.parse(this.defaultAccountService.resolveGitHubUrl(GitHubPaths.copilotSettings)))),
 			}));
@@ -574,16 +574,16 @@ export class ChatStatusDashboard extends DomWidget {
 		let descriptionText: string | MarkdownString;
 		let descriptionClass = '.description';
 		if (newUser && anonymousUser) {
-			descriptionText = new MarkdownString(localize({ key: 'activeDescriptionAnonymous', comment: ['{Locked="]({2})"}', '{Locked="]({3})"}'] }, "By continuing with {0} Copilot, you agree to {1}'s [Terms]({2}) and [Privacy Statement]({3})", defaultChat.provider.default.name, defaultChat.provider.default.name, defaultChat.termsStatementUrl, defaultChat.privacyStatementUrl), { isTrusted: true });
+			descriptionText = new MarkdownString(localize({ key: 'activeDescriptionAnonymous', comment: ['{Locked="]({2})"}', '{Locked="]({3})"}'] }, "By continuing with {0}, you agree to {1}'s [Terms]({2}) and [Privacy Statement]({3})", defaultChat?.provider?.default?.name ?? 'Lucos', defaultChat?.provider?.default?.name ?? 'Lucos', defaultChat?.termsStatementUrl ?? '', defaultChat?.privacyStatementUrl ?? ''), { isTrusted: true });
 			descriptionClass = `${descriptionClass}.terms`;
 		} else if (newUser) {
-			descriptionText = localize('activateDescription', "Set up Copilot to use AI features.");
+			descriptionText = localize('activateDescription', "Set up Lucos AI to use AI features.");
 		} else if (anonymousUser) {
-			descriptionText = localize('enableMoreDescription', "Sign in to enable more Copilot AI features.");
+			descriptionText = localize('enableMoreDescription', "Sign in to enable more Lucos AI features.");
 		} else if (disabled) {
-			descriptionText = localize('enableDescription', "Enable Copilot to use AI features.");
+			descriptionText = localize('enableDescription', "Enable Lucos AI to use AI features.");
 		} else {
-			descriptionText = localize('signInDescription', "Sign in to use GitHub Copilot AI features.");
+			descriptionText = localize('signInDescription', "Sign in to use Lucos AI features.");
 		}
 
 		let buttonLabel: string;
@@ -594,7 +594,7 @@ export class ChatStatusDashboard extends DomWidget {
 		} else if (disabled) {
 			buttonLabel = localize('enableCopilotButton', "Enable AI Features");
 		} else {
-			buttonLabel = localize('signInToUseAIFeatures', "Sign in to use GitHub Copilot");
+			buttonLabel = localize('signInToUseAIFeatures', "Sign in to use Lucos AI");
 		}
 
 		let commandId: string;

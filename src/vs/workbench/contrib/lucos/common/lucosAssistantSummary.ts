@@ -137,3 +137,75 @@ export function sanitizeAssistantText(raw: string): string {
 	text = text.replace(/([.!?])\s+\./g, '$1');
 	return text;
 }
+
+const TOOL_NARRATION_PREFIXES = [
+	'reading ',
+	'searching for ',
+	'searching the web for ',
+	'semantic search',
+	'proposing ',
+	'requesting approval',
+	'working on ',
+	'running ',
+] as const;
+
+/** True when text is only synthetic tool status lines (e.g. "Reading foo.go"). */
+export function isToolNarrationOnly(text: string): boolean {
+	const cleaned = text.trim();
+	if (!cleaned) {
+		return false;
+	}
+	let hasLine = false;
+	for (const raw of cleaned.split(/\n|;/)) {
+		const line = raw.trim().replace(/[.…]+$/u, '').trim();
+		if (!line) {
+			continue;
+		}
+		hasLine = true;
+		const lowered = line.toLowerCase();
+		if (!TOOL_NARRATION_PREFIXES.some(prefix => lowered.startsWith(prefix))) {
+			return false;
+		}
+	}
+	return hasLine;
+}
+
+/**
+ * Remove tool-status narration lines/sentences so the bubble keeps the real answer.
+ * Returns empty string when nothing but narration remains.
+ */
+export function stripToolNarration(text: string): string {
+	const cleaned = text.trim();
+	if (!cleaned) {
+		return '';
+	}
+	if (isToolNarrationOnly(cleaned)) {
+		return '';
+	}
+
+	const kept: string[] = [];
+	for (const raw of cleaned.split('\n')) {
+		const line = raw.trim();
+		if (!line) {
+			if (kept.length > 0 && kept[kept.length - 1] !== '') {
+				kept.push('');
+			}
+			continue;
+		}
+		// Split accidental glued sentences: "Reading a.ts.Here is the answer."
+		const pieces = line.split(/(?<=[.!?…])(?:\s+|(?=[A-Z]))/u);
+		const keptPieces: string[] = [];
+		for (const piece of pieces) {
+			const normalized = piece.trim().replace(/[.…]+$/u, '').trim();
+			const lowered = normalized.toLowerCase();
+			if (TOOL_NARRATION_PREFIXES.some(prefix => lowered.startsWith(prefix))) {
+				continue;
+			}
+			keptPieces.push(piece.trim());
+		}
+		if (keptPieces.length > 0) {
+			kept.push(keptPieces.join(' '));
+		}
+	}
+	return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
