@@ -39,7 +39,8 @@ type LivePhase = 'idle' | 'thinking' | 'analyzing';
 
 /**
  * Live tool activity + Cursor-like post-turn collapsible summary card.
- * Finished summary cards stay in the turn footer; the live row is reused across turns.
+ * Mounted on the assistant turn activity host (above the answer body).
+ * Finished summary cards stay in that host; the live row is reused across turns.
  */
 export class LucosActivityTimeline extends Disposable {
 
@@ -75,7 +76,7 @@ export class LucosActivityTimeline extends Disposable {
 			return;
 		}
 		this.unmount();
-		// Keep live row above patch/permission slots when present.
+		// Live row first in the activity host; summary cards insert after it on finish.
 		parent.insertBefore(this.liveContainer, parent.firstChild);
 		this.mountedParent = parent;
 	}
@@ -153,7 +154,7 @@ export class LucosActivityTimeline extends Disposable {
 	}
 
 	/**
-	 * End of turn: leave a collapsible summary box in the turn footer (if any tools ran),
+	 * End of turn: leave a collapsible summary box in the activity host (if any tools ran),
 	 * then reset the live row for the next request.
 	 */
 	finish(): void {
@@ -223,7 +224,7 @@ export class LucosActivityTimeline extends Disposable {
 		};
 		this.summaryDisposables.add(dom.addDisposableListener(header, 'click', toggle));
 
-		// Insert after live timeline (if mounted), otherwise at top of footer.
+		// Insert after live timeline (if mounted), otherwise at top of the activity host.
 		if (this.liveContainer.parentElement === parent) {
 			parent.insertBefore(card, this.liveContainer.nextSibling);
 		} else {
