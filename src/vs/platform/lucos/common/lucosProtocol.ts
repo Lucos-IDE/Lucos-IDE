@@ -136,12 +136,21 @@ export interface ILucosPermissionRequest {
 	readonly reason?: string;
 }
 
+/** Per-file lifecycle within a proposal — enables Cursor-style per-file accept/revert. */
+export const enum LucosFileChangeStatus {
+	Pending = '',
+	Applied = 'applied',
+	Reverted = 'reverted',
+}
+
 /** A single file change within a proposed patch (`FileChange`) — TW-165/166. */
 export interface ILucosFileChange {
 	readonly path: string;
 	readonly oldText: string;
 	readonly newText: string;
 	readonly baseHash?: string;
+	/** "" (pending), "applied", or "reverted". */
+	readonly status?: string;
 }
 
 /** A proposed multi-file patch held by the daemon (`PatchProposal`). The daemon applies it on accept. */
@@ -157,6 +166,12 @@ export interface ILucosPatchProposal {
 export interface ILucosApplyPatchResult {
 	readonly patchId: string;
 	readonly filesChanged: readonly string[];
+}
+
+/** Result of reverting applied files (`RevertPatchFilesResponse`). */
+export interface ILucosRevertPatchResult {
+	readonly patchId: string;
+	readonly reverted: readonly string[];
 }
 
 /** A repo/user skill (`SkillEntry`) — TW-184. */

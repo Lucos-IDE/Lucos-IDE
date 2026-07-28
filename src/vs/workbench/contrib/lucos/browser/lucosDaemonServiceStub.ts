@@ -8,7 +8,7 @@ import { timeout } from '../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
-import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosRevertPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
 
 export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonService {
 
@@ -70,8 +70,8 @@ export class LucosDaemonServiceStub extends Disposable implements ILucosDaemonSe
 		// no-op in the stub
 	}
 
-	async undoPatch(patchId: string): Promise<ILucosApplyPatchResult> {
-		return { patchId, filesChanged: [] };
+	async revertPatchFiles(patchId: string): Promise<ILucosRevertPatchResult> {
+		return { patchId, reverted: [] };
 	}
 
 	async listCustomizations(): Promise<ILucosCustomizations> {

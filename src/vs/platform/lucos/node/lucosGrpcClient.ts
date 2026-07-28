@@ -145,8 +145,8 @@ export class LucosGrpcClient extends Disposable {
 		return this.unary('rejectPatch', request);
 	}
 
-	undoPatch(request: Record<string, unknown>): Promise<Record<string, unknown>> {
-		return this.unary('undoPatch', request);
+	revertPatchFiles(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+		return this.unary('revertPatchFiles', request);
 	}
 
 	listCustomizations(request: Record<string, unknown>): Promise<Record<string, unknown>> {

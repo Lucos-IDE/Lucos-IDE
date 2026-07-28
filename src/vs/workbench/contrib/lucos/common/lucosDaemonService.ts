@@ -6,7 +6,7 @@
 import { Event } from '../../../../base/common/event.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosRevertPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
 
 export const ILucosDaemonService = createDecorator<ILucosDaemonService>('lucosDaemonService');
 
@@ -59,12 +59,16 @@ export interface ILucosDaemonService {
 	//#region Patch flow (TW-165/166) - the daemon holds the pending patch and applies it on accept.
 	/** Fetch a proposed patch by id (from a `patch.proposed` task event). */
 	getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined>;
-	/** Accept: the daemon applies the patch to the workspace (conflict-checked via base hashes). */
-	applyPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;
+	/**
+	 * Accept: the daemon applies the patch to the workspace (conflict-checked via base hashes).
+	 * Pass `paths` to apply only a subset of files (Cursor-style per-file accept); omit/empty
+	 * to apply every not-yet-applied file.
+	 */
+	applyPatch(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosApplyPatchResult>;
 	/** Reject: discard the pending patch. */
 	rejectPatch(patchId: string): Promise<void>;
-	/** Undo: reverse a previously applied patch (conflict-checked against disk). */
-	undoPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;
+	/** Revert previously applied files back to their pre-patch content. Empty `paths` reverts all applied files. */
+	revertPatchFiles(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosRevertPatchResult>;
 	//#endregion
 
 	/** List skills/agents the daemon discovered in the workspace (TW-184). */

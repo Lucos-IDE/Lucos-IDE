@@ -13,6 +13,7 @@ import { CancellationTokenSource } from '../../../../base/common/cancellation.js
 import { Codicon } from '../../../../base/common/codicons.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { URI } from '../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
@@ -23,6 +24,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { ITextEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
@@ -135,6 +137,8 @@ export class LucosChatViewPane extends ViewPane {
 	private filesChangedSummary!: LucosFilesChangedSummary;
 	private followups!: LucosFollowups;
 	private readonly mentions: ILucosContextMention[] = [];
+	/** Click / keyboard listeners for context chips (cleared with chips). */
+	private readonly chipDisposables = this._register(new DisposableStore());
 	private readonly sessionUi = new Map<string, ISessionUiState>();
 
 	/** Active `@` mention menu state. */
@@ -520,17 +524,13 @@ export class LucosChatViewPane extends ViewPane {
 		if (assistantId && this.turnElements.has(assistantId)) {
 			this.mountActiveTurnFooter(assistantId);
 		}
-
-		// Re-attach kept patch cards onto their original assistant turns (Accept → Undo).
-		if (ui) {
-			for (const [messageId, patch] of ui.messagePatches) {
-				this.renderPatchOnMessage(sessionId, messageId, patch);
-				this.renderTurnCompletionChrome(sessionId, messageId);
-			}
-			// Q&A turns (no patch) still restore follow-ups once the turn is fully done.
-			if (assistantId && !ui.streamingAssistantId && !ui.messagePatches.has(assistantId)) {
-				this.renderTurnCompletionChrome(sessionId, assistantId);
-			}
+		if (ui?.pendingPatch && this.activePatchContainer) {
+			this.patchReview.render(this.activePatchContainer, ui.pendingPatch, () => {
+				// Keep the card mounted after the last file resolves so per-file Revert stays available.
+				const state = this.getSessionUi(sessionId);
+				state.pendingPatch = undefined;
+			});
+			this.activePatchContainer.classList.add('visible');
 		}
 
 		if (ui?.pendingPermission && this.activePermissionContainer) {
@@ -866,7 +866,12 @@ export class LucosChatViewPane extends ViewPane {
 		this.mentions.push(mention);
 		const chip = dom.append(this.chipsContainer, dom.$('span.lucos-chat-chip'));
 		chip.textContent = mention.label;
-		chip.title = mention.path ?? mention.description ?? mention.label;
+		chip.title = mention.path
+			? (mention.description
+				? localize('lucos.chat.chipOpenWithDesc', "{0}\n{1}", mention.path, mention.description)
+				: localize('lucos.chat.chipOpenFile', "Open {0}", mention.path))
+			: (mention.description ?? mention.label);
+		this.wireContextChipOpen(chip, mention);
 		this.chipsContainer.classList.add('has-chips');
 		if (token) {
 			this.stripMentionToken(token);
@@ -874,9 +879,40 @@ export class LucosChatViewPane extends ViewPane {
 		this.hideMentionMenu();
 	}
 
+	/** Selection / file chips open the resource (at range when available), like Cursor. */
+	private wireContextChipOpen(chip: HTMLElement, mention: ILucosContextMention): void {
+		if ((mention.type !== 'selection' && mention.type !== 'file') || !mention.path) {
+			return;
+		}
+		chip.classList.add('clickable');
+		chip.tabIndex = 0;
+		chip.setAttribute('role', 'link');
+		const open = () => {
+			const resource = URI.file(mention.path!);
+			const editorOptions: ITextEditorOptions = mention.range
+				? { selection: mention.range, preserveFocus: true }
+				: { preserveFocus: true };
+			void this.openerService.open(resource, {
+				fromUserGesture: true,
+				editorOptions,
+			});
+		};
+		this.chipDisposables.add(dom.addDisposableListener(chip, 'click', e => {
+			e.preventDefault();
+			open();
+		}));
+		this.chipDisposables.add(dom.addDisposableListener(chip, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				open();
+			}
+		}));
+	}
+
 	private clearContext(): void {
 		this.hideMentionMenu();
 		this.mentions.length = 0;
+		this.chipDisposables.clear();
 		dom.clearNode(this.chipsContainer);
 		this.chipsContainer.classList.remove('has-chips');
 	}
@@ -1204,7 +1240,10 @@ export class LucosChatViewPane extends ViewPane {
 		if (!container) {
 			return;
 		}
-		this.patchReview.render(container, patch, this.patchCallbacks(sessionId, undefined));
+		this.patchReview.render(container, patch, () => {
+			// Keep the card mounted after the last file resolves so per-file Revert stays available.
+			ui.pendingPatch = undefined;
+		});
 		container.classList.add('visible');
 		this.scrollToBottom();
 	}

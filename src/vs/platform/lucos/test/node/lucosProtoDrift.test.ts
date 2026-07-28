@@ -40,8 +40,9 @@ suite('Lucos proto drift', () => {
 		'TaskEvent',
 		'RespondToPermissionRequest',
 		'PatchProposal',
+		'FileChange',
 		'ApplyPatchRequest',
-		'UndoPatchRequest',
+		'RevertPatchFilesRequest',
 		'IndexWorkspaceRequest',
 	];
 
