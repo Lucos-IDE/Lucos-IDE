@@ -32,13 +32,18 @@ console.log(`Patched product.json lucosGatewayUrl -> ${gateway}`);
 
 const contribPath = path.join(root, 'src/vs/workbench/contrib/lucos/browser/lucos.contribution.ts');
 const contrib = fs.readFileSync(contribPath, 'utf8');
-const next = contrib.replace(
-	/(\[LucosSettingId\.CloudGatewayUrl\]:\s*\{[\s\S]*?default:\s*)'[^']*'/,
-	`$1'${gateway}'`,
-);
-if (next === contrib) {
-	console.error(`Failed to patch CloudGatewayUrl default in ${contribPath}`);
+const gatewayDefaultRe = /(\[LucosSettingId\.CloudGatewayUrl\]:\s*\{[\s\S]*?default:\s*)'([^']*)'/;
+const match = gatewayDefaultRe.exec(contrib);
+if (!match) {
+	console.error(`Failed to find CloudGatewayUrl default in ${contribPath}`);
 	process.exit(1);
 }
-fs.writeFileSync(contribPath, next);
-console.log(`Patched lucos.contribution.ts CloudGatewayUrl default -> ${gateway}`);
+
+const currentDefault = match[2];
+if (currentDefault === gateway) {
+	console.log(`lucos.contribution.ts CloudGatewayUrl default already ${gateway}`);
+} else {
+	const next = contrib.replace(gatewayDefaultRe, `$1'${gateway}'`);
+	fs.writeFileSync(contribPath, next);
+	console.log(`Patched lucos.contribution.ts CloudGatewayUrl default ${currentDefault} -> ${gateway}`);
+}
