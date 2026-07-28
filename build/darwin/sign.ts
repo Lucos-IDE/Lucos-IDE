@@ -135,7 +135,7 @@ async function main(buildDir?: string): Promise<void> {
 		]);
 	}
 
-	await retrySignOnKeychainError(() => sign(appOpts));
+	await retrySignOnTransientError(() => sign(appOpts));
 }
 
 if (import.meta.main) {
