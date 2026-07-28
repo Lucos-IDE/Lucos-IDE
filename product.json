@@ -181,6 +181,7 @@
 			"type": "light"
 		}
 	],
+	"builtInExtensionsEnabledWithAutoUpdates": [],
 	"sessionsWindowAllowedExtensions": [],
 	"voiceWsUrl": "wss://falcon-caas.mai.microsoft.com/voice-code/api/v1/realtime/voice",
 	"defaultChatAgent": {
