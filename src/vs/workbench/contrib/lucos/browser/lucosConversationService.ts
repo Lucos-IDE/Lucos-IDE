@@ -162,6 +162,16 @@ export class LucosConversationService extends Disposable implements ILucosConver
 		this._onDidUpdateMessage.fire({ sessionId: found.session.id, message: found.message });
 	}
 
+	replaceMessageContent(messageId: string, content: string): void {
+		const found = this._findAnywhere(messageId);
+		if (!found) {
+			return;
+		}
+		found.message.content = content;
+		found.session.updatedAt = Date.now();
+		this._onDidUpdateMessage.fire({ sessionId: found.session.id, message: found.message });
+	}
+
 	completeMessage(messageId: string): void {
 		const found = this._findAnywhere(messageId);
 		if (!found || !found.message.streaming) {

@@ -69,21 +69,16 @@ else {
 			licenseName: 'MIT',
 			licenseUrl: 'https://github.com/microsoft/vscode/blob/main/LICENSE.txt',
 			serverLicenseUrl: 'https://github.com/microsoft/vscode/blob/main/LICENSE.txt',
+			// LUCOS_FORK: Lucos-neutral stub (no GitHub Copilot extension IDs).
 			defaultChatAgent: {
-				extensionId: 'GitHub.copilot',
-				chatExtensionId: 'GitHub.copilot-chat',
+				extensionId: '',
+				chatExtensionId: '',
 				provider: {
-					default: {
-						id: 'github',
-						name: 'GitHub',
-					},
-					enterprise: {
-						id: 'github-enterprise',
-						name: 'GitHub Enterprise',
-					}
+					default: { id: 'lucos', name: 'Lucos' },
+					enterprise: { id: '', name: '' },
 				},
-				providerScopes: []
-			}
+				providerScopes: [],
+			},
 		});
 	}
 }

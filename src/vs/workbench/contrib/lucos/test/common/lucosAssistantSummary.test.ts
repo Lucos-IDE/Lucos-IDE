@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { resolveCompletionAppend, resolveEmptyAssistantFallback, sanitizeAssistantText } from '../../common/lucosAssistantSummary.js';
+import { resolveCompletionAppend, resolveEmptyAssistantFallback, sanitizeAssistantText, isToolNarrationOnly, stripToolNarration } from '../../common/lucosAssistantSummary.js';
 
 suite('resolveEmptyAssistantFallback', () => {
 
@@ -168,5 +168,36 @@ suite('sanitizeAssistantText', () => {
 		assert.strictEqual(sanitizeAssistantText('Done..'), 'Done.');
 		assert.strictEqual(sanitizeAssistantText('Done. .'), 'Done.');
 		assert.strictEqual(sanitizeAssistantText('Wait...'), 'Wait...');
+	});
+});
+
+suite('tool narration helpers', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('isToolNarrationOnly detects status lines', () => {
+		assert.strictEqual(isToolNarrationOnly('Reading src/index.ts.'), true);
+		assert.strictEqual(isToolNarrationOnly('Searching for \'router\' in src; Reading src/index.ts.'), true);
+		assert.strictEqual(isToolNarrationOnly('Reading src/index.ts.\nI added a health check.'), false);
+		assert.strictEqual(isToolNarrationOnly(''), false);
+	});
+
+	test('stripToolNarration keeps the real answer', () => {
+		assert.strictEqual(
+			stripToolNarration('Reading src/index.ts.\nI added a database health check endpoint.'),
+			'I added a database health check endpoint.',
+		);
+		assert.strictEqual(
+			stripToolNarration('Reading src/index.ts.I added a database health check endpoint.'),
+			'I added a database health check endpoint.',
+		);
+		assert.strictEqual(
+			stripToolNarration('Searching for \'router\' in src.Reading src/index.ts.Proposing changes.'),
+			'',
+		);
+		assert.strictEqual(
+			stripToolNarration('I have successfully added a database health check endpoint.'),
+			'I have successfully added a database health check endpoint.',
+		);
 	});
 });

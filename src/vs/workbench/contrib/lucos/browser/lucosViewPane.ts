@@ -36,7 +36,7 @@ import { ILucosMessage, ILucosSession, LucosMessageRole } from '../common/lucosC
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosChatRequest, ILucosChatRequestService } from '../common/lucosChatRequestService.js';
 import { windowChatHistory } from '../common/lucosChatHistory.js';
-import { resolveCompletionAppend, resolveEmptyAssistantFallback, sanitizeAssistantText } from '../common/lucosAssistantSummary.js';
+import { resolveCompletionAppend, resolveEmptyAssistantFallback, sanitizeAssistantText, stripToolNarration, isToolNarrationOnly } from '../common/lucosAssistantSummary.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 import { ILucosPatchProposal, ILucosPermissionRequest, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
@@ -131,6 +131,7 @@ export class LucosChatViewPane extends ViewPane {
 	private sendIcon!: HTMLElement;
 	private modeButton!: HTMLButtonElement;
 	private modelButton!: HTMLButtonElement;
+	private attachButton!: HTMLButtonElement;
 	private composerMode: LucosComposerMode = 'agent';
 	private openDropdownAnchor: HTMLElement | undefined;
 
@@ -203,6 +204,8 @@ export class LucosChatViewPane extends ViewPane {
 		this._register(this.conversationService.onDidChangeActiveSession(() => this.onActiveSessionChanged()));
 		this._register(this.conversationService.onDidChangeSessions(() => this.rebuildSessionTabs()));
 		this._register(this.chatRequestService.onDidRequest(request => this.handleExternalRequest(request)));
+		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.updateChatAvailability()));
+		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => this.updateChatAvailability()));
 
 		// Bind the sign-in context key so ViewTitle actions show Sign In / Sign Out.
 		const lucosIsSignedIn = LucosIsSignedInContext.bindTo(this.scopedContextKeyService);
@@ -286,11 +289,11 @@ export class LucosChatViewPane extends ViewPane {
 		const toolbarLeft = dom.append(toolbar, dom.$('.lucos-composer-toolbar-left'));
 
 		// Attach file / context — click affordance so files can be attached without typing `@`.
-		const attachButton = dom.append(toolbarLeft, dom.$('button.lucos-composer-attach')) as HTMLButtonElement;
-		attachButton.classList.add(...ThemeIcon.asClassNameArray(Codicon.add));
-		attachButton.title = localize('lucos.chat.attach', "Attach File or Context");
-		attachButton.setAttribute('aria-label', localize('lucos.chat.attach', "Attach File or Context"));
-		this._register(dom.addDisposableListener(attachButton, 'click', e => {
+		this.attachButton = dom.append(toolbarLeft, dom.$('button.lucos-composer-attach')) as HTMLButtonElement;
+		this.attachButton.classList.add(...ThemeIcon.asClassNameArray(Codicon.add));
+		this.attachButton.title = localize('lucos.chat.attach', "Attach File or Context");
+		this.attachButton.setAttribute('aria-label', localize('lucos.chat.attach', "Attach File or Context"));
+		this._register(dom.addDisposableListener(this.attachButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
 			void this.openAttachPicker();
@@ -339,6 +342,7 @@ export class LucosChatViewPane extends ViewPane {
 		this._register(this.lucosDaemonService.onDidChangeConnectionState(() => this.updateBanner()));
 		this._register(this.lucosAuthModeService.onDidChangeMode(() => this.updateBanner()));
 		this.updateBanner();
+		this.updateChatAvailability();
 
 		this.rebuildSessionTabs();
 		this.repaintActiveSessionMessages();
@@ -454,6 +458,7 @@ export class LucosChatViewPane extends ViewPane {
 
 				return store;
 			},
+			onDOMEvent: e => this.onComposerDropdownDOMEvent(e, anchor),
 			onHide: () => {
 				anchor.classList.remove('open');
 				if (this.openDropdownAnchor === anchor) {
@@ -462,6 +467,91 @@ export class LucosChatViewPane extends ViewPane {
 				store.dispose();
 			},
 		});
+	}
+
+	/**
+	 * ContextView does not auto-dismiss for clicks inside the workbench container.
+	 * Close mode/model menus on outside click, Escape, or when the user starts typing
+	 * (focus often remains on the pill button after opening the menu).
+	 */
+	private onComposerDropdownDOMEvent(e: UIEvent, anchor: HTMLElement): void {
+		if (!this.openDropdownAnchor) {
+			return;
+		}
+		const view = this.contextViewService.getContextViewElement();
+
+		if (e.type === 'mousedown' || e.type === 'click') {
+			const target = e.target as Node | null;
+			if (target && (dom.isAncestor(target, view) || dom.isAncestor(target, anchor))) {
+				return;
+			}
+			this.contextViewService.hideContextView();
+			return;
+		}
+
+		if (e.type !== 'keydown') {
+			return;
+		}
+
+		const ke = e as KeyboardEvent;
+		if (ke.key === 'Escape') {
+			ke.preventDefault();
+			ke.stopPropagation();
+			this.contextViewService.hideContextView();
+			this.inputBox.focus();
+			return;
+		}
+
+		const target = ke.target as Node | null;
+		const focusInMenu = !!(target && dom.isAncestor(target, view));
+		if (focusInMenu && (ke.key === 'Enter' || ke.key === ' ' || ke.key.startsWith('Arrow'))) {
+			return;
+		}
+
+		const isPrintable = ke.key.length === 1 && !ke.metaKey && !ke.ctrlKey && !ke.altKey;
+		if (!isPrintable && ke.key !== 'Backspace') {
+			return;
+		}
+
+		this.contextViewService.hideContextView();
+		this.inputBox.focus();
+		if (isPrintable) {
+			ke.preventDefault();
+			ke.stopPropagation();
+			this.insertIntoComposer(ke.key);
+		} else if (ke.key === 'Backspace') {
+			ke.preventDefault();
+			ke.stopPropagation();
+			this.deleteComposerSelection();
+		}
+	}
+
+	private insertIntoComposer(text: string): void {
+		const start = this.inputBox.selectionStart ?? this.inputBox.value.length;
+		const end = this.inputBox.selectionEnd ?? start;
+		const value = this.inputBox.value;
+		this.inputBox.value = `${value.slice(0, start)}${text}${value.slice(end)}`;
+		const pos = start + text.length;
+		this.inputBox.setSelectionRange(pos, pos);
+		this.resizeInput();
+		this.onComposerInput();
+	}
+
+	private deleteComposerSelection(): void {
+		const start = this.inputBox.selectionStart ?? this.inputBox.value.length;
+		const end = this.inputBox.selectionEnd ?? start;
+		const value = this.inputBox.value;
+		if (start !== end) {
+			this.inputBox.value = `${value.slice(0, start)}${value.slice(end)}`;
+			this.inputBox.setSelectionRange(start, start);
+		} else if (start > 0) {
+			this.inputBox.value = `${value.slice(0, start - 1)}${value.slice(start)}`;
+			this.inputBox.setSelectionRange(start - 1, start - 1);
+		} else {
+			return;
+		}
+		this.resizeInput();
+		this.onComposerInput();
 	}
 
 	/** Close mode/model dropdown overlays (does not touch the @ mention menu). */
@@ -509,6 +599,7 @@ export class LucosChatViewPane extends ViewPane {
 	private resetConversationView(): void {
 		this.timeline.unmount();
 		this.timeline.clear();
+		this.timeline.clearSummaries();
 		this.activePatchContainer = undefined;
 		this.activePermissionContainer = undefined;
 
@@ -588,6 +679,11 @@ export class LucosChatViewPane extends ViewPane {
 			return;
 		}
 
+		if (!this.isChatEnabled()) {
+			this.updateChatAvailability();
+			return;
+		}
+
 		const text = this.inputBox.value.trim();
 		if (!text) {
 			return;
@@ -603,6 +699,15 @@ export class LucosChatViewPane extends ViewPane {
 	}
 
 	private async runTask(goal: string, contextOverride?: ILucosWorkspaceContext, selectedAgentPath?: string): Promise<void> {
+		if (!this.isChatEnabled()) {
+			this.updateChatAvailability();
+			this.notificationService.notify({
+				severity: Severity.Info,
+				message: this.chatDisabledReason()
+					?? localize('lucos.chat.noFolder', "Open a folder to use Lucos chat."),
+			});
+			return;
+		}
 		if (!this.lucosAuthModeService.requireCloud(this.notificationService)) {
 			return;
 		}
@@ -641,6 +746,7 @@ export class LucosChatViewPane extends ViewPane {
 		ui.messageGoals.set(assistant.id, goal);
 		if (isActive()) {
 			this.mountActiveTurnFooter(assistant.id);
+			this.timeline.beginThinking();
 		}
 
 		const cts = new CancellationTokenSource();
@@ -683,6 +789,10 @@ export class LucosChatViewPane extends ViewPane {
 				switch (event.kind) {
 					case LucosTaskEventKind.ModelDelta: {
 						const delta = taskPayloadString(event.payload, 'textDelta', 'text_delta') ?? '';
+						// Tool status belongs in the activity card, not the open chat bubble.
+						if (!delta || isToolNarrationOnly(delta)) {
+							break;
+						}
 						this.conversationService.appendToMessage(assistant.id, delta);
 						break;
 					}
@@ -1314,6 +1424,15 @@ export class LucosChatViewPane extends ViewPane {
 		if (this.streamTokens.has(this.conversationService.activeSession.id)) {
 			return;
 		}
+		if (!this.isChatEnabled()) {
+			this.updateChatAvailability();
+			this.notificationService.notify({
+				severity: Severity.Info,
+				message: this.chatDisabledReason()
+					?? localize('lucos.chat.noFolder', "Open a folder to use Lucos chat."),
+			});
+			return;
+		}
 		void this.runTask(request.goal, request.context, request.selectedAgentPath);
 	}
 
@@ -1489,7 +1608,13 @@ export class LucosChatViewPane extends ViewPane {
 			pendingPatch: ui.pendingPatch,
 		};
 
-		if (!message.content.trim()) {
+		const stripped = stripToolNarration(message.content);
+		if (stripped !== message.content.trim()) {
+			this.conversationService.replaceMessageContent(messageId, stripped);
+		}
+
+		const content = stripped.trim();
+		if (!content) {
 			const resolved = resolveEmptyAssistantFallback(input);
 			const text =
 				resolved.kind === 'text' ? resolved.text
@@ -1500,7 +1625,7 @@ export class LucosChatViewPane extends ViewPane {
 			return;
 		}
 
-		const append = resolveCompletionAppend(message.content, input);
+		const append = resolveCompletionAppend(content, input);
 		if (append) {
 			this.conversationService.appendToMessage(messageId, `\n\n${append}`);
 		}
@@ -1541,10 +1666,54 @@ export class LucosChatViewPane extends ViewPane {
 		this.sendButton.title = label;
 		this.sendButton.setAttribute('aria-label', label);
 		this.sendButton.classList.toggle('stop', streaming);
-		this.inputBox.disabled = streaming;
+		// Availability gate owns disabled state when chat is blocked.
+		if (this.isChatEnabled()) {
+			this.inputBox.disabled = streaming;
+			this.sendButton.disabled = false;
+		}
+	}
+
+	/** Chat is usable only when a workspace folder is open. */
+	private isChatEnabled(): boolean {
+		return this.workspaceContextService.getWorkspace().folders.length > 0;
+	}
+
+	private chatDisabledReason(): string | undefined {
+		if (this.workspaceContextService.getWorkspace().folders.length === 0) {
+			return localize('lucos.chat.noFolder', "Open a folder to use Lucos chat.");
+		}
+		return undefined;
+	}
+
+	private updateChatAvailability(): void {
+		const enabled = this.isChatEnabled();
+		const streaming = this.streamTokens.has(this.conversationService.activeSession.id);
+
+		this.composerCard.classList.toggle('disabled', !enabled);
+		this.inputBox.disabled = !enabled || streaming;
+		this.sendButton.disabled = !enabled && !streaming;
+		this.modeButton.disabled = !enabled;
+		this.modelButton.disabled = !enabled;
+		this.attachButton.disabled = !enabled;
+
+		if (!enabled) {
+			const reason = this.chatDisabledReason()
+				?? localize('lucos.chat.noFolder', "Open a folder to use Lucos chat.");
+			this.inputBox.placeholder = reason;
+			this.showBanner(reason);
+			return;
+		}
+
+		this.inputBox.placeholder = localize('lucos.chat.inputPlaceholderShort', "Ask Lucos…  Type @ to attach context");
+		this.updateBanner();
 	}
 
 	private updateBanner(): void {
+		// Workspace / index gate owns the banner while chat is blocked.
+		if (!this.isChatEnabled()) {
+			this.updateChatAvailability();
+			return;
+		}
 		if (this.lucosAuthModeService.isLocalOnly) {
 			this.showBanner(
 				localize('lucos.banner.localOnly', "Local-only mode - sign in for AI assistance."),
@@ -1644,7 +1813,13 @@ export class LucosChatViewPane extends ViewPane {
 			return;
 		}
 
-		const sanitized = sanitizeAssistantText(message.content);
+		const sanitized = stripToolNarration(sanitizeAssistantText(message.content));
+		if (!sanitized) {
+			if (message.streaming) {
+				this.renderAssistantSkeleton(turn.body);
+			}
+			return;
+		}
 		const markdown = new MarkdownString(sanitized, { supportThemeIcons: true, isTrusted: false });
 		// Daemon delivers complete bursts (not true incremental tokens); avoid incomplete-token artifacts.
 		const rendered = store.add(renderMarkdown(markdown, {
@@ -1660,6 +1835,17 @@ export class LucosChatViewPane extends ViewPane {
 	private renderAssistantSkeleton(container: HTMLElement): void {
 		const skeleton = dom.append(container, dom.$('.lucos-assistant-skeleton'));
 		skeleton.setAttribute('aria-label', localize('lucos.chat.thinking', "Thinking"));
+		skeleton.setAttribute('role', 'status');
+
+		const status = dom.append(skeleton, dom.$('.lucos-assistant-skeleton-status'));
+		const pulse = dom.append(status, dom.$('span.lucos-timeline-pulse'));
+		pulse.setAttribute('aria-hidden', 'true');
+		for (let i = 0; i < 3; i++) {
+			dom.append(pulse, dom.$('span.lucos-timeline-pulse-dot'));
+		}
+		const label = dom.append(status, dom.$('span.lucos-assistant-skeleton-label'));
+		label.textContent = localize('lucos.chat.thinking', "Thinking");
+
 		for (let i = 0; i < 3; i++) {
 			dom.append(skeleton, dom.$('.lucos-assistant-skeleton-line'));
 		}
