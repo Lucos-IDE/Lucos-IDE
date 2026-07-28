@@ -17,6 +17,7 @@ service LucosDaemon {
 	rpc GetPendingPatch(GetPendingPatchRequest) returns (PatchProposal);
 	rpc ApplyPatch(ApplyPatchRequest) returns (ApplyPatchResponse);
 	rpc RejectPatch(RejectPatchRequest) returns (RejectPatchResponse);
+	rpc RevertPatchFiles(RevertPatchFilesRequest) returns (RevertPatchFilesResponse);
 	rpc ListCustomizations(ListCustomizationsRequest) returns (CustomizationsSnapshot);
 	rpc IndexWorkspace(IndexWorkspaceRequest) returns (stream TaskEvent);
 }
@@ -100,6 +101,7 @@ message FileChange {
 	string old_text = 2;
 	string new_text = 3;
 	string base_hash = 4;
+	string status = 5;
 }
 
 message PatchProposal {
@@ -115,6 +117,7 @@ message GetPendingPatchRequest { string patch_id = 1; }
 message ApplyPatchRequest {
 	string patch_id = 1;
 	string workspace_root = 2;
+	repeated string paths = 3;
 }
 
 message ApplyPatchResponse {
@@ -127,6 +130,16 @@ message ApplyPatchResponse {
 
 message RejectPatchRequest { string patch_id = 1; }
 message RejectPatchResponse { string patch_id = 1; }
+
+message RevertPatchFilesRequest {
+	string patch_id = 1;
+	string workspace_root = 2;
+	repeated string paths = 3;
+}
+message RevertPatchFilesResponse {
+	string patch_id = 1;
+	repeated string reverted = 2;
+}
 
 message ListCustomizationsRequest { string workspace_root = 1; }
 

@@ -46,6 +46,7 @@ import { LucosAuthCallbackHandler } from './lucosAuthCallbackHandler.js';
 import { LucosAccountSettingsContribution } from './lucosAccountSettings.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import './lucosPatchContentProvider.js';
 
 // The daemon service is bound per-platform: desktop -> real gRPC client
 // (electron-browser/lucos.contribution.ts); web -> stub (browser/lucos.stub.contribution.ts).

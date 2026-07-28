@@ -16,6 +16,14 @@ import { ISearchService } from '../../../services/search/common/search.js';
 
 export type LucosContextMentionType = 'selection' | 'file' | 'workspace';
 
+/** 1-based editor range for a selection mention (open-on-click + chip label). */
+export interface ILucosContextRange {
+	readonly startLineNumber: number;
+	readonly startColumn: number;
+	readonly endLineNumber: number;
+	readonly endColumn: number;
+}
+
 export interface ILucosContextMention {
 	readonly type: LucosContextMentionType;
 	readonly label: string;
@@ -24,6 +32,24 @@ export interface ILucosContextMention {
 	readonly workspaceId?: string;
 	/** Relative directory path shown as secondary text in the mention menu. */
 	readonly description?: string;
+	/** Present for selection mentions — used for chip label and open-at-range. */
+	readonly range?: ILucosContextRange;
+}
+
+/**
+ * Cursor-style selection chip label: `@file.ts:12` or `@file.ts:12-28`.
+ * When the selection ends at column 1 of a line (common whole-line select), the display
+ * end line is the previous line so the range matches what the user highlighted.
+ */
+export function formatSelectionChipLabel(fileName: string, range: ILucosContextRange): string {
+	let endLine = range.endLineNumber;
+	if (range.endColumn === 1 && endLine > range.startLineNumber) {
+		endLine -= 1;
+	}
+	const span = range.startLineNumber === endLine
+		? `${range.startLineNumber}`
+		: `${range.startLineNumber}-${endLine}`;
+	return `@${fileName}:${span}`;
 }
 
 export type LucosStaticContextKind = 'selection' | 'activeFile' | 'workspace';
@@ -130,7 +156,28 @@ export class LucosContextPicker {
 			const selection = editor.getSelection();
 			const model = editor.getModel();
 			if (selection && model && !selection.isEmpty()) {
-				return { type: 'selection', label: '@selection', text: model.getValueInRange(selection), path: model.uri.fsPath };
+				const range: ILucosContextRange = {
+					startLineNumber: selection.startLineNumber,
+					startColumn: selection.startColumn,
+					endLineNumber: selection.endLineNumber,
+					endColumn: selection.endColumn,
+				};
+				const name = basename(model.uri);
+				const label = formatSelectionChipLabel(name, range);
+				let displayEnd = range.endLineNumber;
+				if (range.endColumn === 1 && displayEnd > range.startLineNumber) {
+					displayEnd -= 1;
+				}
+				return {
+					type: 'selection',
+					label,
+					text: model.getValueInRange(selection),
+					path: model.uri.fsPath,
+					range,
+					description: range.startLineNumber === displayEnd
+						? localize('lucos.context.selectionLine', "Line {0}", range.startLineNumber)
+						: localize('lucos.context.selectionRange', "Lines {0}-{1}", range.startLineNumber, displayEnd),
+				};
 			}
 		}
 		return undefined;

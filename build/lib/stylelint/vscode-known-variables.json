@@ -977,6 +977,8 @@
 		"--notebook-editor-font-family",
 		"--notebook-editor-font-size",
 		"--notebook-editor-font-weight",
+		"--vscode-editor-font-family",
+		"--vscode-editor-font-size",
 		"--outline-element-color",
 		"--agents-aquarium-strip-index",
 		"--separator-border",

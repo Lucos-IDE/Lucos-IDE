@@ -10,7 +10,7 @@ import { INativeEnvironmentService } from '../../environment/common/environment.
 import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
 import { ILucosDaemonNodeService } from '../common/lucosDaemonNode.js';
-import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosRevertPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../common/lucosProtocol.js';
 import { LucosGrpcClient, isLucosDaemonUnavailableError } from './lucosGrpcClient.js';
 import { resolveLucosDaemonBinaryPath } from './lucosDaemonPath.js';
 import { LucosDaemonProcessManager } from './lucosDaemonProcessManager.js';
@@ -162,13 +162,18 @@ export class LucosDaemonNodeService extends Disposable implements ILucosDaemonNo
 		}
 	}
 
-	async applyPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult> {
-		const response = await this.client.applyPatch({ patchId, workspaceRoot });
+	async applyPatch(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosApplyPatchResult> {
+		const response = await this.client.applyPatch({ patchId, workspaceRoot, paths: paths ? [...paths] : [] });
 		return { patchId: (response.patchId as string) ?? patchId, filesChanged: asStringArray(response.filesChanged) };
 	}
 
 	async rejectPatch(patchId: string): Promise<void> {
 		await this.client.rejectPatch({ patchId });
+	}
+
+	async revertPatchFiles(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosRevertPatchResult> {
+		const response = await this.client.revertPatchFiles({ patchId, workspaceRoot, paths: paths ? [...paths] : [] });
+		return { patchId: (response.patchId as string) ?? patchId, reverted: asStringArray(response.reverted) };
 	}
 
 	async listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations> {
@@ -464,6 +469,7 @@ function mapPatchProposal(proposal: Record<string, unknown>): ILucosPatchProposa
 			oldText: (change.oldText as string) ?? '',
 			newText: (change.newText as string) ?? '',
 			baseHash: (change.baseHash as string) || undefined,
+			status: (change.status as string) || undefined,
 		})),
 		status: (proposal.status as string) || undefined,
 	};

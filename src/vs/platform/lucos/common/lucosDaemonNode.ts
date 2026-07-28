@@ -5,7 +5,7 @@
 
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
-import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from './lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosRevertPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosConnectionState } from './lucosProtocol.js';
 
 export const ipcLucosDaemonChannelName = 'lucosDaemon';
 
@@ -41,8 +41,9 @@ export interface ILucosDaemonNodeService {
 
 	//#region Patch flow (TW-165/166)
 	getPendingPatch(patchId: string): Promise<ILucosPatchProposal | undefined>;
-	applyPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult>;
+	applyPatch(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosApplyPatchResult>;
 	rejectPatch(patchId: string): Promise<void>;
+	revertPatchFiles(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosRevertPatchResult>;
 	//#endregion
 
 	/** Skills/agents discovered locally (TW-184). */

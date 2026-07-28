@@ -9,7 +9,7 @@ import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.j
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { ILucosDaemonNodeService } from '../../../../platform/lucos/common/lucosDaemonNode.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
-import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { ILucosIndexWorkspaceRequest, ILucosApplyPatchResult, ILucosRevertPatchResult, ILucosAuthStatus, ILucosCloudCredentials, ILucosCustomizations, ILucosHealth, ILucosPatchProposal, IStartAgentTaskRequest, ITaskEvent, LucosAuthState, LucosConnectionState, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
 
 export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemonService {
 
@@ -75,12 +75,16 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 		return this.nodeService.getPendingPatch(patchId);
 	}
 
-	applyPatch(patchId: string, workspaceRoot: string): Promise<ILucosApplyPatchResult> {
-		return this.nodeService.applyPatch(patchId, workspaceRoot);
+	applyPatch(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosApplyPatchResult> {
+		return this.nodeService.applyPatch(patchId, workspaceRoot, paths);
 	}
 
 	rejectPatch(patchId: string): Promise<void> {
 		return this.nodeService.rejectPatch(patchId);
+	}
+
+	revertPatchFiles(patchId: string, workspaceRoot: string, paths?: readonly string[]): Promise<ILucosRevertPatchResult> {
+		return this.nodeService.revertPatchFiles(patchId, workspaceRoot, paths);
 	}
 
 	listCustomizations(workspaceRoot: string): Promise<ILucosCustomizations> {
