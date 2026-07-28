@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
 name: Build & stage lucos-daemon
 description: Checkout Lucos-IDE/local-daemon, build the Go binary, stage it under .build/daemon/
 
@@ -8,6 +13,10 @@ inputs:
   arch:
     description: Target arch (arm64, x64)
     required: true
+  gateway-url:
+    description: Cloud gateway URL baked into the daemon binary default
+    required: false
+    default: 'https://api.lucos.com'
   token:
     description: >
       PAT with contents:read on Lucos-IDE/local-daemon.
@@ -74,10 +83,13 @@ runs:
 
     - name: Build and stage daemon binary
       shell: bash
+      env:
+        LUCOS_GATEWAY_URL: ${{ inputs.gateway-url }}
       run: |
         set -euo pipefail
         platform='${{ inputs.platform }}'
         arch='${{ inputs.arch }}'
+        gateway_url="${LUCOS_GATEWAY_URL:-https://api.lucos.com}"
         case "${platform}" in
           darwin) goos=darwin ;;
           linux)  goos=linux ;;
@@ -98,8 +110,12 @@ runs:
         (
           cd .build/src/local-daemon
           export GOWORK=off
+          version="$(git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)"
+          ldflags="-X github.com/Lucos-IDE/local-daemon/internal/version.Version=${version}"
+          ldflags+=" -X github.com/Lucos-IDE/local-daemon/internal/config.defaultGatewayURL=${gateway_url}"
+          echo "Building daemon with gateway default: ${gateway_url}"
           GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
-            go build -o "../../daemon/${out_name}" ./cmd/lucos-daemon
+            go build -ldflags "${ldflags}" -o "../../daemon/${out_name}" ./cmd/lucos-daemon
         )
         if [[ "${platform}" != 'win32' ]]; then
           chmod +x ".build/daemon/${out_name}"

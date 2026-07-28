@@ -35,20 +35,30 @@ find_artifact() {
   printf '%s' "$file"
 }
 
+# Source patterns accept both new canonical names and legacy CI names.
 declare -A PLATFORM_PATTERNS=(
+  ["macos-arm64"]="lucos-arm64.dmg"
+  ["macos-x64"]="lucos-x64.dmg"
+  ["windows"]="lucos.exe"
+  ["linux"]="lucos.deb"
+  ["linux-appimage"]="lucos.AppImage"
+)
+
+declare -A PLATFORM_FILES=(
+  ["macos-arm64"]="lucos-arm64.dmg"
+  ["macos-x64"]="lucos-x64.dmg"
+  ["windows"]="lucos.exe"
+  ["linux"]="lucos.deb"
+  ["linux-appimage"]="lucos.AppImage"
+)
+
+# Fallback patterns for older artifact names still present in a run.
+declare -A PLATFORM_FALLBACK_PATTERNS=(
   ["macos-arm64"]="Lucos-darwin-arm64*.dmg"
   ["macos-x64"]="Lucos-darwin-x64*.dmg"
   ["windows"]="LucosSetup*.exe"
   ["linux"]="*.deb"
   ["linux-appimage"]="Lucos-*-linux-x64.AppImage"
-)
-
-declare -A PLATFORM_FILES=(
-  ["macos-arm64"]="macos-arm64.dmg"
-  ["macos-x64"]="macos-x64.dmg"
-  ["windows"]="windows.exe"
-  ["linux"]="linux.deb"
-  ["linux-appimage"]="linux.appimage"
 )
 
 MANIFEST_DIR=$(mktemp -d)
@@ -61,7 +71,9 @@ platforms_json=""
 uploaded=0
 
 for platform in macos-arm64 macos-x64 windows linux linux-appimage; do
-  src=$(find_artifact "${PLATFORM_PATTERNS[$platform]}") || continue
+  src=$(find_artifact "${PLATFORM_PATTERNS[$platform]}") \
+    || src=$(find_artifact "${PLATFORM_FALLBACK_PATTERNS[$platform]}") \
+    || continue
   canonical="${PLATFORM_FILES[$platform]}"
   versioned_object="${GCS_CHANNEL}/v${RELEASE_VERSION}/${canonical}"
   latest_object="latest/${GCS_CHANNEL}/${canonical}"
