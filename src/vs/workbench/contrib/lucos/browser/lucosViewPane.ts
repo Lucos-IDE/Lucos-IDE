@@ -26,6 +26,8 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { ITextEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IViewPaneOptions, ViewPane } from '../../../browser/parts/views/viewPane.js';
@@ -99,6 +101,13 @@ interface IMentionToken {
 	readonly query: string;
 }
 
+/** An entry in the attach-context quick-pick (a workspace file, static option, or "browse from disk"). */
+interface IAttachPickItem extends IQuickPickItem {
+	readonly staticKind?: LucosStaticContextKind;
+	readonly mention?: ILucosContextMention;
+	readonly browse?: boolean;
+}
+
 type LucosMentionMenuItem =
 	| { readonly kind: 'static'; readonly option: ILucosStaticContextOption }
 	| { readonly kind: 'file'; readonly mention: ILucosContextMention };
@@ -137,7 +146,7 @@ export class LucosChatViewPane extends ViewPane {
 	private filesChangedSummary!: LucosFilesChangedSummary;
 	private followups!: LucosFollowups;
 	private readonly mentions: ILucosContextMention[] = [];
-	/** Click / keyboard listeners for context chips (cleared with chips). */
+	/** Per-chip listeners (open + remove); cleared whenever the chip set is rebuilt. */
 	private readonly chipDisposables = this._register(new DisposableStore());
 	private readonly sessionUi = new Map<string, ISessionUiState>();
 
@@ -182,6 +191,8 @@ export class LucosChatViewPane extends ViewPane {
 		@ILucosChatRequestService private readonly chatRequestService: ILucosChatRequestService,
 		@ILucosAuthModeService private readonly lucosAuthModeService: ILucosAuthModeService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -279,6 +290,17 @@ export class LucosChatViewPane extends ViewPane {
 
 		const toolbar = dom.append(this.composerCard, dom.$('.lucos-composer-toolbar'));
 		const toolbarLeft = dom.append(toolbar, dom.$('.lucos-composer-toolbar-left'));
+
+		// Attach file / context — click affordance so files can be attached without typing `@`.
+		const attachButton = dom.append(toolbarLeft, dom.$('button.lucos-composer-attach')) as HTMLButtonElement;
+		attachButton.classList.add(...ThemeIcon.asClassNameArray(Codicon.add));
+		attachButton.title = localize('lucos.chat.attach', "Attach File or Context");
+		attachButton.setAttribute('aria-label', localize('lucos.chat.attach', "Attach File or Context"));
+		this._register(dom.addDisposableListener(attachButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.openAttachPicker();
+		}));
 
 		this.modeButton = dom.append(toolbarLeft, dom.$('button.lucos-composer-mode')) as HTMLButtonElement;
 		this.modeButton.setAttribute('aria-haspopup', 'menu');
@@ -854,6 +876,76 @@ export class LucosChatViewPane extends ViewPane {
 		);
 	}
 
+	/** Open a quick-pick to attach a file / selection / workspace as context (the attach button). */
+	private async openAttachPicker(): Promise<void> {
+		const picker = this.quickInputService.createQuickPick<IAttachPickItem>();
+		picker.placeholder = localize('lucos.attach.placeholder', "Attach a file, selection, or workspace as context");
+		picker.matchOnDescription = true;
+
+		const browseItem: IAttachPickItem = { label: localize('lucos.attach.browse', "$(folder-opened) Upload File from Disk…"), browse: true, alwaysShow: true };
+		const staticItems = (query: string): IAttachPickItem[] =>
+			this.contextPicker.getStaticOptions(query).map(o => ({ label: o.label, description: o.description, staticKind: o.kind }));
+
+		picker.items = [browseItem, ...staticItems('')];
+
+		let searchSeq = 0;
+		let searchCts: CancellationTokenSource | undefined;
+		const disposables = new DisposableStore();
+		disposables.add(picker.onDidChangeValue(async value => {
+			const query = value.trim();
+			searchCts?.cancel();
+			if (!query) {
+				picker.busy = false;
+				picker.items = [browseItem, ...staticItems('')];
+				return;
+			}
+			const seq = ++searchSeq;
+			searchCts = new CancellationTokenSource();
+			picker.busy = true;
+			const files = await this.contextPicker.searchFiles(query, searchCts.token);
+			if (seq !== searchSeq) {
+				return; // superseded by a newer keystroke
+			}
+			picker.busy = false;
+			picker.items = [browseItem, ...staticItems(query), ...files.map(f => ({ label: f.label, description: f.description, mention: f }))];
+		}));
+		disposables.add(picker.onDidAccept(async () => {
+			const selected = picker.selectedItems[0];
+			picker.hide();
+			if (!selected) {
+				return;
+			}
+			if (selected.browse) {
+				await this.browseAndAttachFiles();
+				return;
+			}
+			const mention = selected.mention ?? (selected.staticKind ? this.contextPicker.captureStatic(selected.staticKind) : undefined);
+			if (mention) {
+				this.addContext(mention);
+			}
+		}));
+		picker.onDidHide(() => {
+			searchCts?.cancel();
+			disposables.dispose();
+			picker.dispose();
+		});
+		picker.show();
+	}
+
+	/** Open a native file dialog to attach one or more files from disk (bug e: file upload). */
+	private async browseAndAttachFiles(): Promise<void> {
+		const uris = await this.fileDialogService.showOpenDialog({
+			canSelectFiles: true,
+			canSelectMany: true,
+			title: localize('lucos.attach.browseTitle', "Attach Files"),
+			openLabel: localize('lucos.attach.browseLabel', "Attach"),
+			defaultUri: this.workspaceContextService.getWorkspace().folders[0]?.uri,
+		});
+		for (const uri of uris ?? []) {
+			this.addContext(this.contextPicker.mentionForResource(uri));
+		}
+	}
+
 	private addContext(mention: ILucosContextMention, token?: IMentionToken): void {
 		// Avoid duplicate file chips for the same path.
 		if (mention.type === 'file' && mention.path && this.mentions.some(m => m.type === 'file' && m.path === mention.path)) {
@@ -865,18 +957,40 @@ export class LucosChatViewPane extends ViewPane {
 		}
 		this.mentions.push(mention);
 		const chip = dom.append(this.chipsContainer, dom.$('span.lucos-chat-chip'));
-		chip.textContent = mention.label;
 		chip.title = mention.path
 			? (mention.description
 				? localize('lucos.chat.chipOpenWithDesc', "{0}\n{1}", mention.path, mention.description)
 				: localize('lucos.chat.chipOpenFile', "Open {0}", mention.path))
 			: (mention.description ?? mention.label);
+		const chipLabel = dom.append(chip, dom.$('span.lucos-chat-chip-label'));
+		chipLabel.textContent = mention.label;
 		this.wireContextChipOpen(chip, mention);
+		const removeButton = dom.append(chip, dom.$('button.lucos-chat-chip-remove')) as HTMLButtonElement;
+		removeButton.classList.add(...ThemeIcon.asClassNameArray(Codicon.close));
+		removeButton.title = localize('lucos.chat.removeContext', "Remove");
+		removeButton.setAttribute('aria-label', localize('lucos.chat.removeContextAria', "Remove {0}", mention.label));
+		this.chipDisposables.add(dom.addDisposableListener(removeButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.removeContext(mention, chip);
+		}));
 		this.chipsContainer.classList.add('has-chips');
 		if (token) {
 			this.stripMentionToken(token);
 		}
 		this.hideMentionMenu();
+	}
+
+	/** Remove a single attached context chip (bug: chips were previously not removable). */
+	private removeContext(mention: ILucosContextMention, chip: HTMLElement): void {
+		const index = this.mentions.indexOf(mention);
+		if (index >= 0) {
+			this.mentions.splice(index, 1);
+		}
+		chip.remove();
+		if (!this.mentions.length) {
+			this.chipsContainer.classList.remove('has-chips');
+		}
 	}
 
 	/** Selection / file chips open the resource (at range when available), like Cursor. */
@@ -911,8 +1025,8 @@ export class LucosChatViewPane extends ViewPane {
 
 	private clearContext(): void {
 		this.hideMentionMenu();
-		this.mentions.length = 0;
 		this.chipDisposables.clear();
+		this.mentions.length = 0;
 		dom.clearNode(this.chipsContainer);
 		this.chipsContainer.classList.remove('has-chips');
 	}
