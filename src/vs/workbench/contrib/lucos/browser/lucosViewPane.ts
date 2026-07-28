@@ -24,6 +24,7 @@ import { IKeybindingService } from '../../../../platform/keybinding/common/keybi
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
@@ -86,10 +87,11 @@ interface IMentionToken {
 	readonly query: string;
 }
 
-/** An entry in the attach-context quick-pick (a workspace file, or a static selection/file/workspace option). */
+/** An entry in the attach-context quick-pick (a workspace file, static option, or "browse from disk"). */
 interface IAttachPickItem extends IQuickPickItem {
 	readonly staticKind?: LucosStaticContextKind;
 	readonly mention?: ILucosContextMention;
+	readonly browse?: boolean;
 }
 
 type LucosMentionMenuItem =
@@ -174,6 +176,7 @@ export class LucosChatViewPane extends ViewPane {
 		@ILucosAuthModeService private readonly lucosAuthModeService: ILucosAuthModeService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -744,10 +747,11 @@ export class LucosChatViewPane extends ViewPane {
 		picker.placeholder = localize('lucos.attach.placeholder', "Attach a file, selection, or workspace as context");
 		picker.matchOnDescription = true;
 
+		const browseItem: IAttachPickItem = { label: localize('lucos.attach.browse', "$(folder-opened) Upload File from Disk…"), browse: true, alwaysShow: true };
 		const staticItems = (query: string): IAttachPickItem[] =>
 			this.contextPicker.getStaticOptions(query).map(o => ({ label: o.label, description: o.description, staticKind: o.kind }));
 
-		picker.items = staticItems('');
+		picker.items = [browseItem, ...staticItems('')];
 
 		let searchSeq = 0;
 		let searchCts: CancellationTokenSource | undefined;
@@ -757,7 +761,7 @@ export class LucosChatViewPane extends ViewPane {
 			searchCts?.cancel();
 			if (!query) {
 				picker.busy = false;
-				picker.items = staticItems('');
+				picker.items = [browseItem, ...staticItems('')];
 				return;
 			}
 			const seq = ++searchSeq;
@@ -768,17 +772,22 @@ export class LucosChatViewPane extends ViewPane {
 				return; // superseded by a newer keystroke
 			}
 			picker.busy = false;
-			picker.items = [...staticItems(query), ...files.map(f => ({ label: f.label, description: f.description, mention: f }))];
+			picker.items = [browseItem, ...staticItems(query), ...files.map(f => ({ label: f.label, description: f.description, mention: f }))];
 		}));
-		disposables.add(picker.onDidAccept(() => {
+		disposables.add(picker.onDidAccept(async () => {
 			const selected = picker.selectedItems[0];
-			if (selected) {
-				const mention = selected.mention ?? (selected.staticKind ? this.contextPicker.captureStatic(selected.staticKind) : undefined);
-				if (mention) {
-					this.addContext(mention);
-				}
-			}
 			picker.hide();
+			if (!selected) {
+				return;
+			}
+			if (selected.browse) {
+				await this.browseAndAttachFiles();
+				return;
+			}
+			const mention = selected.mention ?? (selected.staticKind ? this.contextPicker.captureStatic(selected.staticKind) : undefined);
+			if (mention) {
+				this.addContext(mention);
+			}
 		}));
 		picker.onDidHide(() => {
 			searchCts?.cancel();
@@ -786,6 +795,20 @@ export class LucosChatViewPane extends ViewPane {
 			picker.dispose();
 		});
 		picker.show();
+	}
+
+	/** Open a native file dialog to attach one or more files from disk (bug e: file upload). */
+	private async browseAndAttachFiles(): Promise<void> {
+		const uris = await this.fileDialogService.showOpenDialog({
+			canSelectFiles: true,
+			canSelectMany: true,
+			title: localize('lucos.attach.browseTitle', "Attach Files"),
+			openLabel: localize('lucos.attach.browseLabel', "Attach"),
+			defaultUri: this.workspaceContextService.getWorkspace().folders[0]?.uri,
+		});
+		for (const uri of uris ?? []) {
+			this.addContext(this.contextPicker.mentionForResource(uri));
+		}
 	}
 
 	private addContext(mention: ILucosContextMention, token?: IMentionToken): void {
