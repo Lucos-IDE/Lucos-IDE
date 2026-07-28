@@ -10,7 +10,7 @@ import { SyncDescriptor } from '../../../../platform/instantiation/common/descri
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { registerAction2, Action2, MenuId } from '../../../../platform/actions/common/actions.js';
+import { registerAction2, Action2, MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { EditorExtensions } from '../../../common/editor.js';
@@ -262,6 +262,29 @@ registerAction2(class extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		await accessor.get(ILucosAuthService).logout();
 	}
+});
+//#endregion
+
+//#region Accounts menu Sign In / Switch / Sign Out (MenuId.AccountsContext — the person icon)
+// QA: the Accounts menu had no Lucos entries. Reuses the sign-in overlay + logout command,
+// gated on the global lucosIsSignedIn context key.
+MenuRegistry.appendMenuItem(MenuId.AccountsContext, {
+	group: '2_lucos',
+	order: 1,
+	command: { id: LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID, title: localize('lucos.accounts.signIn', "Sign In to Lucos") },
+	when: LucosIsSignedInContext.toNegated(),
+});
+MenuRegistry.appendMenuItem(MenuId.AccountsContext, {
+	group: '2_lucos',
+	order: 1,
+	command: { id: LUCOS_SHOW_SIGN_IN_OVERLAY_COMMAND_ID, title: localize('lucos.accounts.switch', "Switch Lucos Account…") },
+	when: LucosIsSignedInContext,
+});
+MenuRegistry.appendMenuItem(MenuId.AccountsContext, {
+	group: '2_lucos',
+	order: 2,
+	command: { id: LucosLogoutAction.ID, title: localize('lucos.accounts.signOut', "Sign Out of Lucos") },
+	when: LucosIsSignedInContext,
 });
 //#endregion
 

@@ -539,14 +539,70 @@
 .lucos-chat-chip {
 	display: inline-flex;
 	align-items: center;
+	gap: 2px;
 	height: 18px;
-	padding: 0 6px;
+	padding: 0 2px 0 6px;
 	border: 1px solid var(--vscode-chat-requestBorder, var(--vscode-input-border, var(--vscode-panel-border)));
 	border-radius: 4px;
 	background: transparent;
 	color: var(--vscode-foreground);
 	font-size: 11px;
 	line-height: 18px;
+}
+
+.lucos-chat-chip-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 160px;
+}
+
+.lucos-chat-chip-remove {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	padding: 0;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	opacity: 0.7;
+	cursor: pointer;
+}
+
+.lucos-chat-chip-remove:hover {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.lucos-chat-chip-remove .codicon {
+	font-size: 12px;
+}
+
+.lucos-composer-attach {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	opacity: 0.85;
+	cursor: pointer;
+}
+
+.lucos-composer-attach:hover {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.lucos-composer-attach .codicon {
+	font-size: 16px;
 }
 
 .lucos-composer-input {
