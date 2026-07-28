@@ -60,7 +60,7 @@ export class LucosPatchReview extends Disposable {
 		super();
 	}
 
-	render(container: HTMLElement, patch: ILucosPatchProposal, onResolved?: () => void): void {
+	render(container: HTMLElement, patch: ILucosPatchProposal, callbacks: ILucosPatchReviewCallbacks = {}): void {
 		this.renderDisposables.clear();
 		dom.clearNode(container);
 		container.classList.add('visible');
@@ -82,7 +82,12 @@ export class LucosPatchReview extends Disposable {
 		const cardActions = dom.append(card, dom.$('.lucos-patch-actions'));
 		const status = dom.append(card, dom.$('.lucos-patch-status'));
 
-		this.refresh(patch, entries, headerStats, cardActions, status, onResolved);
+		this.refresh(patch, entries, headerStats, cardActions, status, callbacks);
+	}
+
+	/** Open a patch file preview (or the real file after Accept). */
+	previewChange(change: ILucosFileChange, status?: string): Promise<void> {
+		return this.openDiff(change, status);
 	}
 
 	/** Recompute aggregate header, card-level actions, and summary from current per-file state. */
@@ -92,7 +97,7 @@ export class LucosPatchReview extends Disposable {
 		headerStats: HTMLElement,
 		cardActions: HTMLElement,
 		status: HTMLElement,
-		onResolved?: () => void,
+		callbacks: ILucosPatchReviewCallbacks,
 	): void {
 		this.refreshDisposables.clear();
 		const totals = entries.reduce((acc, e) => ({ additions: acc.additions + e.diff.additions, deletions: acc.deletions + e.diff.deletions }), { additions: 0, deletions: 0 });
@@ -101,7 +106,7 @@ export class LucosPatchReview extends Disposable {
 		this.appendStatBadge(headerStats, totals.additions, totals.deletions);
 
 		for (const entry of entries) {
-			this.renderFileActions(entry, patch, () => this.refresh(patch, entries, headerStats, cardActions, status, onResolved));
+			this.renderFileActions(entry, patch, () => this.refresh(patch, entries, headerStats, cardActions, status, callbacks), callbacks);
 		}
 
 		const pending = entries.filter(e => e.state === 'pending');
@@ -113,25 +118,21 @@ export class LucosPatchReview extends Disposable {
 			acceptAll.textContent = pending.length === entries.length
 				? localize('lucos.patch.acceptAll', "Accept all")
 				: localize('lucos.patch.acceptRemaining', "Accept remaining ({0})", pending.length);
-			this.refreshDisposables.add(dom.addDisposableListener(acceptAll, 'click', () => void this.applyFiles(patch, pending, () => this.refresh(patch, entries, headerStats, cardActions, status, onResolved))));
+			this.refreshDisposables.add(dom.addDisposableListener(acceptAll, 'click', () => void this.applyFiles(patch, pending, () => this.refresh(patch, entries, headerStats, cardActions, status, callbacks), callbacks)));
 
 			// Reject-all discards the whole pending patch; only offered before anything is applied.
 			if (applied.length === 0) {
 				const rejectAll = dom.append(cardActions, dom.$('button.lucos-patch-reject')) as HTMLButtonElement;
 				rejectAll.textContent = localize('lucos.patch.rejectAll', "Reject all");
-				this.refreshDisposables.add(dom.addDisposableListener(rejectAll, 'click', () => void this.rejectAll(patch, entries, () => this.refresh(patch, entries, headerStats, cardActions, status, onResolved))));
+				this.refreshDisposables.add(dom.addDisposableListener(rejectAll, 'click', () => void this.rejectAll(patch, entries, () => this.refresh(patch, entries, headerStats, cardActions, status, callbacks), callbacks)));
 			}
 		} else if (applied.length > 0) {
 			const revertAll = dom.append(cardActions, dom.$('button.lucos-patch-reject')) as HTMLButtonElement;
 			revertAll.textContent = localize('lucos.patch.revertAll', "Revert all");
-			this.refreshDisposables.add(dom.addDisposableListener(revertAll, 'click', () => void this.revertFiles(patch, applied, () => this.refresh(patch, entries, headerStats, cardActions, status, onResolved))));
+			this.refreshDisposables.add(dom.addDisposableListener(revertAll, 'click', () => void this.revertFiles(patch, applied, () => this.refresh(patch, entries, headerStats, cardActions, status, callbacks), callbacks)));
 		}
 
 		this.renderSummary(status, entries);
-
-		if (pending.length === 0) {
-			onResolved?.();
-		}
 	}
 
 	/** One collapsible file section: header (chevron · path · stats · actions) + inline diff body. */
@@ -185,7 +186,8 @@ export class LucosPatchReview extends Disposable {
 		const openDiff = (e: Event) => {
 			e.preventDefault();
 			e.stopPropagation();
-			void this.openDiff(change);
+			const status = this.initialState(change) === 'applied' ? 'applied' : undefined;
+			void this.openDiff(change, status);
 		};
 		this.renderDisposables.add(dom.addDisposableListener(openBtn, 'click', openDiff));
 		this.renderDisposables.add(dom.addDisposableListener(openBtn, 'keydown', (e: KeyboardEvent) => {
@@ -205,7 +207,7 @@ export class LucosPatchReview extends Disposable {
 	}
 
 	/** Rebuild a file's action toolbar + status pill to match its current state. */
-	private renderFileActions(entry: IFileEntry, patch: ILucosPatchProposal, refresh: () => void): void {
+	private renderFileActions(entry: IFileEntry, patch: ILucosPatchProposal, refresh: () => void, callbacks: ILucosPatchReviewCallbacks): void {
 		dom.clearNode(entry.actionsEl);
 		dom.clearNode(entry.stateEl);
 		entry.stateEl.className = 'lucos-patch-file-state';
@@ -222,18 +224,18 @@ export class LucosPatchReview extends Disposable {
 
 		switch (entry.state) {
 			case 'pending':
-				addButton(localize('lucos.patch.accept', "Accept"), 'accept', () => this.applyFiles(patch, [entry], refresh));
+				addButton(localize('lucos.patch.accept', "Accept"), 'accept', () => this.applyFiles(patch, [entry], refresh, callbacks));
 				addButton(localize('lucos.patch.reject', "Reject"), 'reject', async () => { entry.state = 'rejected'; refresh(); });
 				break;
 			case 'applied':
 				entry.stateEl.classList.add('applied');
 				entry.stateEl.textContent = localize('lucos.patch.stateApplied', "Applied");
-				addButton(localize('lucos.patch.revert', "Revert"), 'reject', () => this.revertFiles(patch, [entry], refresh));
+				addButton(localize('lucos.patch.revert', "Revert"), 'reject', () => this.revertFiles(patch, [entry], refresh, callbacks));
 				break;
 			case 'reverted':
 				entry.stateEl.classList.add('reverted');
 				entry.stateEl.textContent = localize('lucos.patch.stateReverted', "Reverted");
-				addButton(localize('lucos.patch.reapply', "Re-apply"), 'accept', () => this.applyFiles(patch, [entry], refresh));
+				addButton(localize('lucos.patch.reapply', "Re-apply"), 'accept', () => this.applyFiles(patch, [entry], refresh, callbacks));
 				break;
 			case 'rejected':
 				entry.stateEl.classList.add('rejected');
@@ -345,12 +347,64 @@ export class LucosPatchReview extends Disposable {
 		return localize('lucos.patch.modified', "Modified");
 	}
 
-	private renderUndoActions(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement, callbacks: ILucosPatchReviewCallbacks): void {
-		dom.clearNode(actions);
-		actions.style.display = '';
-		const undoButton = dom.append(actions, dom.$('button.lucos-patch-undo')) as HTMLButtonElement;
-		undoButton.textContent = localize('lucos.patch.undo', "Undo");
-		this._register(dom.addDisposableListener(undoButton, 'click', () => void this.undo(patch, actions, status, callbacks)));
+	private workspaceFileUri(path: string): URI | undefined {
+		const folder = this.workspaceContextService.getWorkspace().folders[0];
+		if (!folder) {
+			return undefined;
+		}
+		return URI.joinPath(folder.uri, path);
+	}
+
+	private async openDiff(change: ILucosFileChange, status?: string): Promise<void> {
+		// After Accept, open the real workspace file — the synthetic review URI is for pending diffs.
+		if (status === 'applied') {
+			const resource = this.workspaceFileUri(change.path);
+			if (!resource) {
+				this.notificationService.notify({
+					severity: Severity.Error,
+					message: localize('lucos.patch.noWorkspace', "No workspace folder is open."),
+				});
+				return;
+			}
+			try {
+				await this.editorService.openEditor({ resource, options: { pinned: true } });
+			} catch (error) {
+				this.notificationService.notify({
+					severity: Severity.Error,
+					message: localize(
+						'lucos.patch.openFileFailed',
+						"Failed to open {0}: {1}",
+						change.path,
+						error instanceof Error ? error.message : String(error),
+					),
+				});
+			}
+			return;
+		}
+
+		const original = makeLucosPatchUri(change.path, 'original');
+		const modified = makeLucosPatchUri(change.path, 'modified');
+		setLucosPatchContent(original, change.oldText ?? '');
+		setLucosPatchContent(modified, change.newText ?? '');
+
+		try {
+			await this.editorService.openEditor({
+				original: { resource: original },
+				modified: { resource: modified },
+				label: localize('lucos.patch.diffLabel', "Lucos Review: {0}", change.path),
+				options: { pinned: true },
+			});
+		} catch (error) {
+			this.notificationService.notify({
+				severity: Severity.Error,
+				message: localize(
+					'lucos.patch.diffOpenFailed',
+					"Failed to open patch preview for {0}: {1}",
+					change.path,
+					error instanceof Error ? error.message : String(error),
+				),
+			});
+		}
 	}
 
 	private get workspaceRoot(): string {
@@ -358,7 +412,7 @@ export class LucosPatchReview extends Disposable {
 	}
 
 	/** Apply the given file entries (Cursor-style per-file / remaining accept). */
-	private async applyFiles(patch: ILucosPatchProposal, targets: IFileEntry[], refresh: () => void): Promise<void> {
+	private async applyFiles(patch: ILucosPatchProposal, targets: IFileEntry[], refresh: () => void, callbacks: ILucosPatchReviewCallbacks): Promise<void> {
 		if (targets.length === 0) {
 			return;
 		}
@@ -368,6 +422,8 @@ export class LucosPatchReview extends Disposable {
 			const paths = targets.map(t => t.change.path);
 			await this.lucosDaemonService.applyPatch(patch.patchId, this.workspaceRoot, paths);
 			targets.forEach(t => { t.state = 'applied'; t.busy = false; });
+			const applied: ILucosPatchProposal = { ...patch, status: 'applied' };
+			callbacks.onApplied?.(applied);
 			refresh();
 		} catch (error) {
 			targets.forEach(t => t.busy = false);
@@ -377,7 +433,7 @@ export class LucosPatchReview extends Disposable {
 	}
 
 	/** Revert previously applied file entries back to pre-patch content. */
-	private async revertFiles(patch: ILucosPatchProposal, targets: IFileEntry[], refresh: () => void): Promise<void> {
+	private async revertFiles(patch: ILucosPatchProposal, targets: IFileEntry[], refresh: () => void, callbacks: ILucosPatchReviewCallbacks): Promise<void> {
 		if (targets.length === 0) {
 			return;
 		}
@@ -387,6 +443,7 @@ export class LucosPatchReview extends Disposable {
 			const paths = targets.map(t => t.change.path);
 			await this.lucosDaemonService.revertPatchFiles(patch.patchId, this.workspaceRoot, paths);
 			targets.forEach(t => { t.state = 'reverted'; t.busy = false; });
+			callbacks.onReverted?.(patch);
 			refresh();
 		} catch (error) {
 			targets.forEach(t => t.busy = false);
@@ -395,26 +452,14 @@ export class LucosPatchReview extends Disposable {
 		}
 	}
 
-	private async rejectAll(patch: ILucosPatchProposal, entries: IFileEntry[], refresh: () => void): Promise<void> {
+	private async rejectAll(patch: ILucosPatchProposal, entries: IFileEntry[], refresh: () => void, callbacks: ILucosPatchReviewCallbacks): Promise<void> {
 		try {
 			await this.lucosDaemonService.rejectPatch(patch.patchId);
 			entries.forEach(e => { if (e.state === 'pending') { e.state = 'rejected'; } });
 			refresh();
-		} catch (error) {
-			this.notificationService.notify({ severity: Severity.Error, message: localize('lucos.patch.rejectFailed', "Failed to reject patch: {0}", error instanceof Error ? error.message : String(error)) });
-		}
-	}
-
-	private async undo(patch: ILucosPatchProposal, actions: HTMLElement, status: HTMLElement, callbacks: ILucosPatchReviewCallbacks): Promise<void> {
-		const workspaceRoot = this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath ?? '';
-		try {
-			await this.lucosDaemonService.undoPatch(patch.patchId, workspaceRoot);
-			actions.style.display = 'none';
-			status.textContent = localize('lucos.patch.reverted', "Reverted.");
-			callbacks.onReverted?.(patch);
 			callbacks.onResolved?.();
 		} catch (error) {
-			this.notificationService.notify({ severity: Severity.Error, message: localize('lucos.patch.undoFailed', "Failed to undo patch: {0}", error instanceof Error ? error.message : String(error)) });
+			this.notificationService.notify({ severity: Severity.Error, message: localize('lucos.patch.rejectFailed', "Failed to reject patch: {0}", error instanceof Error ? error.message : String(error)) });
 		}
 	}
 }

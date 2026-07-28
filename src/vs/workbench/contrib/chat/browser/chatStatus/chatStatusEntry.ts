@@ -24,7 +24,6 @@ import { $ as h, disposableWindowInterval } from '../../../../../base/browser/do
 import { isNewUser } from './chatStatus.js';
 import product from '../../../../../platform/product/common/product.js';
 import { isCompletionsEnabled } from '../../../../../editor/common/services/completionsEnablement.js';
-import { CHAT_SETUP_ACTION_ID } from '../actions/chatActions.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { InEditorZenModeContext } from '../../../../common/contextkeys.js';
 import { ChatConfiguration } from '../../common/constants.js';
@@ -166,12 +165,12 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	private update(): void {
 		const sentiment = this.chatEntitlementService.sentiment;
 		if (!sentiment.hidden) {
-			// const props = this.getEntryProps();
-			// if (this.entry) {
-			// 	this.entry.update(props);
-			// } else {
-			// 	this.entry = this.statusbarService.addEntry(props, 'chat.statusBarEntry', StatusbarAlignment.RIGHT, { location: { id: 'status.editor.mode', priority: 100.1 }, alignment: StatusbarAlignment.RIGHT });
-			// }
+			const props = this.getEntryProps();
+			if (this.entry) {
+				this.entry.update(props);
+			} else {
+				this.entry = this.statusbarService.addEntry(props, 'chat.statusBarEntry', StatusbarAlignment.RIGHT, { location: { id: 'status.editor.mode', priority: 100.1 }, alignment: StatusbarAlignment.RIGHT });
+			}
 		} else {
 			this.entry?.dispose();
 			this.entry = undefined;
@@ -336,14 +335,14 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 		if (isNewUser(this.chatEntitlementService)) {
 			const entitlement = this.chatEntitlementService.entitlement;
 
-			// Sign In
+			// Sign-in affordance intentionally omitted for Lucos — fall through to the default sparkle entry.
 			if (
 				this.chatEntitlementService.sentiment.later ||	// user skipped setup
 				entitlement === ChatEntitlement.Available ||	// user is entitled
 				isProUser(entitlement) ||						// user is already pro
 				entitlement === ChatEntitlement.Free			// user is already free
 			) {
-				// return this.getSetupEntryProps();
+				// no-op: keep default Lucos AI status entry
 			}
 		} else {
 			const quotas = this.chatEntitlementService.quotas;
@@ -354,10 +353,9 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 				ariaLabel = localize('copilotDisabledStatus', "Lucos AI disabled");
 			}
 
-			// Signed out — keep showing Sign-in affordance even when BYOK models are present
-			// so air-gapped users can still authenticate to unlock the full Copilot experience.
+			// Signed out — Lucos keeps the default sparkle entry (no Copilot sign-in command).
 			else if (this.chatEntitlementService.entitlement === ChatEntitlement.Unknown) {
-				// return this.getSetupEntryProps();
+				// no-op: keep default Lucos AI status entry
 			}
 
 			// Quota Exceeded (all tracked plans share the premium chat quota)
@@ -401,18 +399,6 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 		} satisfies IStatusbarEntry;
 
 		return baseResult;
-	}
-
-	private getSetupEntryProps(): IStatusbarEntry {
-		return {
-			name: localize('chatStatus', "Lucos AI Status"),
-			text: '$(sparkle)',
-			ariaLabel: localize('chatStatusAria', "Lucos AI status"),
-			command: CHAT_SETUP_ACTION_ID,
-			showInAllWindows: true,
-			kind: undefined,
-			content: this.entryAnchor,
-		};
 	}
 
 	override dispose(): void {

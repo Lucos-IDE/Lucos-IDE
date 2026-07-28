@@ -543,10 +543,12 @@ export class LucosChatViewPane extends ViewPane {
 			this.mountActiveTurnFooter(assistantId);
 		}
 		if (ui?.pendingPatch && this.activePatchContainer) {
-			this.patchReview.render(this.activePatchContainer, ui.pendingPatch, () => {
-				// Keep the card mounted after the last file resolves so per-file Revert stays available.
-				const state = this.getSessionUi(sessionId);
-				state.pendingPatch = undefined;
+			this.patchReview.render(this.activePatchContainer, ui.pendingPatch, {
+				onResolved: () => {
+					// Keep the card mounted after the last file resolves so per-file Revert stays available.
+					const state = this.getSessionUi(sessionId);
+					state.pendingPatch = undefined;
+				},
 			});
 			this.activePatchContainer.classList.add('visible');
 		}
@@ -1350,9 +1352,11 @@ export class LucosChatViewPane extends ViewPane {
 		if (!container) {
 			return;
 		}
-		this.patchReview.render(container, patch, () => {
-			// Keep the card mounted after the last file resolves so per-file Revert stays available.
-			ui.pendingPatch = undefined;
+		this.patchReview.render(container, patch, {
+			onResolved: () => {
+				// Keep the card mounted after the last file resolves so per-file Revert stays available.
+				ui.pendingPatch = undefined;
+			},
 		});
 		container.classList.add('visible');
 		this.scrollToBottom();

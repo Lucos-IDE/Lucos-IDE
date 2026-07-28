@@ -321,25 +321,6 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 			}
 		}
 
-		class ChatSetupTriggerForceSignInDialogAction extends Action2 {
-
-			constructor() {
-				super({
-					id: 'workbench.action.chat.triggerSetupForceSignIn',
-					title: localize2('forceSignIn', "Sign in to use GitHub Copilot")
-				});
-			}
-
-			override async run(accessor: ServicesAccessor): Promise<unknown> {
-				const commandService = accessor.get(ICommandService);
-				const telemetryService = accessor.get(ITelemetryService);
-
-				telemetryService.publicLog2<WorkbenchActionExecutedEvent, WorkbenchActionExecutedClassification>('workbenchActionExecuted', { id: CHAT_SETUP_ACTION_ID, from: 'api' });
-
-				return commandService.executeCommand(CHAT_SETUP_ACTION_ID, undefined, { forceSignInDialog: true });
-			}
-		}
-
 		class ChatSetupTriggerAnonymousWithoutDialogAction extends Action2 {
 
 			constructor() {
@@ -556,7 +537,6 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 		}
 
 		registerAction2(ChatSetupTriggerAction);
-		// registerAction2(ChatSetupTriggerForceSignInDialogAction);
 		registerAction2(ChatSetupFromAccountsAction);
 		registerAction2(ChatSetupSignInTitleBarAction);
 		registerAction2(ToggleSignInTitleBarAction);
