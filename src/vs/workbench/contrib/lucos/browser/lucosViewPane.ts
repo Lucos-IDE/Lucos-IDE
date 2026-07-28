@@ -41,7 +41,7 @@ import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 import { ILucosPatchProposal, ILucosPermissionRequest, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
 import { taskPayloadString } from '../../../../platform/lucos/common/lucosTaskPayload.js';
-import { LucosSettingId } from '../common/lucosConfiguration.js';
+import { LUCOS_MODELS, LucosSettingId, lucosModelLabel } from '../common/lucosConfiguration.js';
 import { LucosActivityTimeline } from './lucosActivityTimeline.js';
 import { LucosCommandApproval, permissionRequestFromTaskEvent } from './lucosCommandApproval.js';
 import { ILucosContextMention, ILucosStaticContextOption, LucosContextPicker, LucosStaticContextKind } from './lucosContextPicker.js';
@@ -80,12 +80,6 @@ interface ISessionUiState {
 
 /** Max tabs rendered in the strip before overflow history menu. */
 const MAX_VISIBLE_TABS = 6;
-
-const LUCOS_MODELS = [
-	{ id: 'claude-opus-4-8', label: 'claude-opus-4-8' },
-	{ id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
-	{ id: 'claude-haiku-4-5', label: 'claude-haiku-4-5' },
-] as const;
 
 type LucosComposerMode = 'ask' | 'agent';
 
@@ -364,8 +358,10 @@ export class LucosChatViewPane extends ViewPane {
 	}
 
 	private updateModelButton(): void {
-		const model = (this.configurationService.getValue<string>(LucosSettingId.AgentModel) ?? '').trim()
-			|| localize('lucos.chat.defaultModel', "Default model");
+		const modelId = (this.configurationService.getValue<string>(LucosSettingId.AgentModel) ?? '').trim();
+		const model = modelId
+			? lucosModelLabel(modelId)
+			: localize('lucos.chat.defaultModel', "Default model");
 		this.modelButton.textContent = '';
 		const text = dom.append(this.modelButton, dom.$('span.lucos-composer-pill-label'));
 		text.textContent = model;
@@ -882,7 +878,7 @@ export class LucosChatViewPane extends ViewPane {
 		picker.placeholder = localize('lucos.attach.placeholder', "Attach a file, selection, or workspace as context");
 		picker.matchOnDescription = true;
 
-		const browseItem: IAttachPickItem = { label: localize('lucos.attach.browse', "$(folder-opened) Upload File from Disk…"), browse: true, alwaysShow: true };
+		const browseItem: IAttachPickItem = { label: '$(folder-opened) ' + localize('lucos.attach.browse', "Upload File from Disk..."), browse: true, alwaysShow: true };
 		const staticItems = (query: string): IAttachPickItem[] =>
 			this.contextPicker.getStaticOptions(query).map(o => ({ label: o.label, description: o.description, staticKind: o.kind }));
 

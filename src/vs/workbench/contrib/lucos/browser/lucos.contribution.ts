@@ -19,7 +19,7 @@ import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurati
 import { Extensions as ViewContainerExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainer, ViewContainerLocation } from '../../../common/views.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution } from '../../../common/contributions.js';
-import { LucosSettingId } from '../common/lucosConfiguration.js';
+import { LUCOS_DEFAULT_MODEL, LUCOS_MODEL_IDS, LucosSettingId } from '../common/lucosConfiguration.js';
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
 import { ILucosChatRequestService } from '../common/lucosChatRequestService.js';
@@ -86,8 +86,8 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		},
 		[LucosSettingId.AgentModel]: {
 			type: 'string',
-			default: 'claude-sonnet-4-6',
-			enum: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+			default: LUCOS_DEFAULT_MODEL,
+			enum: [...LUCOS_MODEL_IDS],
 			markdownDescription: localize('lucos.agent.model', "Default model for Lucos chat and edits. The available set is ultimately gated by your plan."),
 			tags: ['lucos'],
 		},

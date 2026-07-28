@@ -29,6 +29,38 @@ export const LucosSettingId = {
 	AuthMode: 'lucos.auth.mode',
 } as const;
 
+/**
+ * Placeholder model catalog for the composer picker / settings enum.
+ * Selection still flows through the existing StartAgentTask `model` field unchanged.
+ */
+export const LUCOS_MODELS = [
+	// Claude
+	{ id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+	{ id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+	{ id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+	// GPT-5 series
+	{ id: 'gpt-5', label: 'GPT-5' },
+	{ id: 'gpt-5.4', label: 'GPT-5.4' },
+	{ id: 'gpt-5-mini', label: 'GPT-5 Mini' },
+	{ id: 'gpt-5-nano', label: 'GPT-5 Nano' },
+	{ id: 'gpt-5-pro', label: 'GPT-5 Pro' },
+	// Gemini
+	{ id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+	{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+	{ id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+] as const;
+
+export type LucosModelId = typeof LUCOS_MODELS[number]['id'];
+
+export const LUCOS_MODEL_IDS: readonly LucosModelId[] = LUCOS_MODELS.map(m => m.id);
+
+export const LUCOS_DEFAULT_MODEL: LucosModelId = 'claude-sonnet-4-6';
+
+export function lucosModelLabel(modelId: string): string {
+	const match = LUCOS_MODELS.find(m => m.id === modelId);
+	return match?.label ?? modelId;
+}
+
 export type LucosSettingId = typeof LucosSettingId[keyof typeof LucosSettingId];
 
 /** Strongly-typed view of the Lucos settings, for consumers reading via IConfigurationService. */
