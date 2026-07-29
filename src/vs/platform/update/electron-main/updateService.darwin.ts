@@ -3,14 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { spawn } from 'child_process';
+import { app } from 'electron';
 import * as electron from 'electron';
-import { CancellationToken } from '../../../base/common/cancellation.js';
+import { mkdir } from 'fs/promises';
+import { tmpdir } from 'os';
 import { memoize } from '../../../base/common/decorators.js';
+import { CancellationToken } from '../../../base/common/cancellation.js';
 import { Event } from '../../../base/common/event.js';
 import { hash } from '../../../base/common/hash.js';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
+import * as path from '../../../base/common/path.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
+import { IFileService } from '../../files/common/files.js';
 import { ILifecycleMainService, IRelaunchHandler, IRelaunchOptions } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
@@ -20,10 +26,12 @@ import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, IUpdate, State, StateType, UpdateType } from '../common/update.js';
 import { IMeteredConnectionService } from '../../meteredConnection/common/meteredConnection.js';
 import { AbstractUpdateService, createUpdateURL, getUpdateRequestHeaders, IUpdateURLOptions, UpdateErrorClassification } from './abstractUpdateService.js';
+import { checkForUpdatesViaGitHub, downloadUpdateViaGitHub, getDefaultGitHubPackagePath, IGitHubUpdateContext, useGitHubReleases } from './gitHubUpdateHelper.js';
 
 export class DarwinUpdateService extends AbstractUpdateService implements IRelaunchHandler {
 
 	private readonly disposables = new DisposableStore();
+	private gitHubPackagePath: string | undefined;
 
 	@memoize private get onRawError(): Event<string> { return Event.fromNodeEventEmitter(electron.autoUpdater, 'error', (_, message) => message); }
 	@memoize private get onRawCheckingForUpdate(): Event<void> { return Event.fromNodeEventEmitter<void>(electron.autoUpdater, 'checking-for-update'); }
@@ -37,6 +45,12 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 		}));
 	}
 
+	@memoize
+	get cachePath(): Promise<string> {
+		const result = path.join(tmpdir(), `lucos-${this.productService.quality}-darwin-${process.arch}`);
+		return mkdir(result, { recursive: true }).then(() => result);
+	}
+
 	constructor(
 		@ILifecycleMainService lifecycleMainService: ILifecycleMainService,
 		@IConfigurationService configurationService: IConfigurationService,
@@ -47,6 +61,7 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 		@IProductService productService: IProductService,
 		@IApplicationStorageMainService applicationStorageMainService: IApplicationStorageMainService,
 		@IMeteredConnectionService meteredConnectionService: IMeteredConnectionService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super(lifecycleMainService, configurationService, environmentMainService, requestService, logService, productService, telemetryService, applicationStorageMainService, meteredConnectionService, true);
 
@@ -55,11 +70,11 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 
 	handleRelaunch(options?: IRelaunchOptions): boolean {
 		if (options?.addArgs || options?.removeArgs) {
-			return false; // we cannot apply an update and restart with different args
+			return false;
 		}
 
 		if (this.state.type !== StateType.Ready) {
-			return false; // we only handle the relaunch when we have a pending update
+			return false;
 		}
 
 		this.logService.trace('update#handleRelaunch(): running raw#quitAndInstall()');
@@ -71,11 +86,37 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 	protected override async initialize(): Promise<void> {
 		await super.initialize();
 
-		this.onRawError(this.onError, this, this.disposables);
-		this.onRawCheckingForUpdate(this.onCheckingForUpdate, this, this.disposables);
-		this.onRawUpdateAvailable(this.onUpdateAvailable, this, this.disposables);
-		this.onRawUpdateDownloaded(this.onUpdateDownloaded, this, this.disposables);
-		this.onRawUpdateNotAvailable(this.onUpdateNotAvailable, this, this.disposables);
+		if (!useGitHubReleases(this.productService)) {
+			this.onRawError(this.onError, this, this.disposables);
+			this.onRawCheckingForUpdate(this.onCheckingForUpdate, this, this.disposables);
+			this.onRawUpdateAvailable(this.onUpdateAvailable, this, this.disposables);
+			this.onRawUpdateDownloaded(this.onUpdateDownloaded, this, this.disposables);
+			this.onRawUpdateNotAvailable(this.onUpdateNotAvailable, this, this.disposables);
+		}
+	}
+
+	private getGitHubContext(): IGitHubUpdateContext {
+		return {
+			productService: this.productService,
+			requestService: this.requestService,
+			fileService: this.fileService,
+			logService: this.logService,
+			telemetryService: this.telemetryService,
+			getUpdateType: () => UpdateType.Archive,
+			setState: state => this.setState(state),
+			getState: () => this.state,
+			getOverwrite: () => this._overwrite,
+			getPackagePath: async update => {
+				const cachePath = await this.cachePath;
+				return getDefaultGitHubPackagePath(cachePath, update, '.dmg');
+			},
+			onDownloadReady: async (update, packagePath, explicit) => {
+				this.gitHubPackagePath = packagePath;
+				this.setState(State.Downloaded(update, explicit, this._overwrite));
+				this.logService.info(`Update downloaded from GitHub: ${packagePath}`);
+				this.setState(State.Ready(update, explicit, this._overwrite));
+			},
+		};
 	}
 
 	private onCheckingForUpdate(): void {
@@ -86,12 +127,15 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 		this.telemetryService.publicLog2<{ messageHash: string }, UpdateErrorClassification>('update:error', { messageHash: String(hash(String(err))) });
 		this.logService.error('UpdateService error:', err);
 
-		// only show message when explicitly checking for updates
 		const message = (this.state.type === StateType.CheckingForUpdates && this.state.explicit) ? err : undefined;
 		this.setState(State.Idle(UpdateType.Archive, message));
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string | undefined {
+		if (useGitHubReleases(this.productService)) {
+			return `github://${this.productService.gitHubReleasesRepo}/${commit}`;
+		}
+
 		const assetID = this.productService.darwinUniversalAssetId ?? (process.arch === 'x64' ? 'darwin' : 'darwin-arm64');
 		const url = createUpdateURL(this.productService.updateUrl!, assetID, quality, commit, options);
 		const headers = getUpdateRequestHeaders(this.productService.version);
@@ -99,7 +143,6 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 			this.logService.trace('update#buildUpdateFeedUrl - setting feed URL for Electron autoUpdater', { url, assetID, quality, commit, headers });
 			electron.autoUpdater.setFeedURL({ url, headers });
 		} catch (e) {
-			// application is very likely not signed
 			this.logService.error('Failed to set update feed URL', e);
 			return undefined;
 		}
@@ -113,6 +156,11 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 
 		this.setState(State.CheckingForUpdates(explicit));
 
+		if (useGitHubReleases(this.productService)) {
+			void checkForUpdatesViaGitHub(this.getGitHubContext(), explicit);
+			return;
+		}
+
 		const internalOrg = this.getInternalOrg();
 		const background = !explicit && !internalOrg;
 		const url = this.buildUpdateFeedUrl(this.quality, pendingCommit ?? this.productService.commit!, { background, internalOrg });
@@ -122,7 +170,6 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 			return;
 		}
 
-		// When connection is metered and this is not an explicit check, avoid electron call as to not to trigger auto-download.
 		if (!explicit && this.meteredConnectionService.isConnectionMetered) {
 			this.logService.info('update#doCheckForUpdates - checking for update without auto-download because connection is metered');
 			this.checkForUpdateNoDownload(url);
@@ -133,11 +180,6 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 		electron.autoUpdater.checkForUpdates();
 	}
 
-	/**
-	 * Manually check the update feed URL without triggering Electron's auto-download.
-	 * Used when connection is metered or in the embedded app.
-	 * @param canInstall When false, signals that the update cannot be installed from this app.
-	 */
 	private async checkForUpdateNoDownload(url: string, canInstall?: boolean): Promise<void> {
 		const headers = getUpdateRequestHeaders(this.productService.version);
 		this.logService.trace('update#checkForUpdateNoDownload - checking update server', { url, headers });
@@ -195,13 +237,36 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 	}
 
 	protected override async doDownloadUpdate(state: AvailableForDownload): Promise<void> {
-		// Rebuild feed URL and trigger download via Electron's auto-updater
+		if (useGitHubReleases(this.productService)) {
+			await downloadUpdateViaGitHub(this.getGitHubContext(), state, true);
+			return;
+		}
+
 		this.buildUpdateFeedUrl(this.quality!, state.update.version, { internalOrg: this.getInternalOrg() });
 		this.setState(State.CheckingForUpdates(true));
 		electron.autoUpdater.checkForUpdates();
 	}
 
 	protected override doQuitAndInstall(): void {
+		if (this.gitHubPackagePath) {
+			const dmgPath = this.gitHubPackagePath;
+			const targetAppPath = path.dirname(path.dirname(path.dirname(app.getPath('exe'))));
+			const installScript = `set -e
+MOUNT_POINT=$(hdiutil attach -nobrowse -readonly "${dmgPath}" | awk '/\\/Volumes\\// {print $3; exit}')
+APP_PATH=$(find "$MOUNT_POINT" -maxdepth 1 -name "*.app" | head -1)
+ditto "$APP_PATH" "${targetAppPath}"
+hdiutil detach "$MOUNT_POINT" -quiet || true
+open "${targetAppPath}"`;
+
+			spawn('/bin/sh', ['-c', installScript], {
+				detached: true,
+				stdio: 'ignore',
+			});
+
+			app.quit();
+			return;
+		}
+
 		this.logService.trace('update#quitAndInstall(): running raw#quitAndInstall()');
 		electron.autoUpdater.quitAndInstall();
 	}

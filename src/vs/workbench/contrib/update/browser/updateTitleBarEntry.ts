@@ -324,6 +324,9 @@ export class UpdateTitleBarEntry extends BaseActionViewItem {
 				break;
 
 			case StateType.AvailableForDownload:
+				label.textContent = localize('updateIndicator.updateAvailable', "Update available");
+				this.content.classList.add('prominent');
+				break;
 			case StateType.Downloaded:
 			case StateType.Ready:
 				label.textContent = localize('updateIndicator.update', "Update");
