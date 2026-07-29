@@ -35,6 +35,8 @@
 #      OR
 #    LUCOS_DAEMON_SSH_KEY                 read-only deploy key private key for that repo
 #    (GITHUB_TOKEN cannot checkout sibling private repos — API returns Not Found)
+#  In-app updates (private GitHub Releases):
+#    LUCOS_GITHUB_RELEASES_TOKEN          fine-grained PAT with Contents: Read on Lucos-IDE/Lucos-IDE
 #  GCS public downloads (Path A — storage.googleapis.com):
 #    GCP_RELEASES_SA_KEY                  JSON key for lucos-releases-ci service account
 #  Repository variables:
@@ -319,6 +321,7 @@ jobs:
       - name: Patch Lucos gateway URL for environment
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)
@@ -543,6 +546,7 @@ jobs:
       - name: Patch Lucos gateway URL for environment
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)
@@ -746,6 +750,7 @@ jobs:
       - name: Patch Lucos gateway URL for environment
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)
@@ -1026,6 +1031,7 @@ jobs:
       - name: Patch Lucos gateway URL for environment
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)

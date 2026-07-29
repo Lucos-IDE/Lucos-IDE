@@ -4,10 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Bake the Lucos cloud gateway URL into product.json and the settings default
+ * Bake Lucos packaging config into product.json (and settings defaults)
  * before packaging. Used by Lucos Release CI for staging vs production builds.
  *
- * Usage: LUCOS_GATEWAY_URL=https://api.lucos.com node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
+ * Usage:
+ *   LUCOS_GATEWAY_URL=https://api.lucos.com \
+ *   LUCOS_GITHUB_RELEASES_TOKEN=ghp_... \
+ *   node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
  */
 
 import * as fs from 'node:fs';
@@ -25,8 +28,22 @@ if (!/^https:\/\//.test(gateway)) {
 
 const root = process.cwd();
 const productPath = path.join(root, 'product.json');
-const product = JSON.parse(fs.readFileSync(productPath, 'utf8')) as { lucosGatewayUrl?: string };
+const product = JSON.parse(fs.readFileSync(productPath, 'utf8')) as {
+	lucosGatewayUrl?: string;
+	gitHubReleasesRepo?: string;
+	gitHubReleasesToken?: string;
+};
 product.lucosGatewayUrl = gateway;
+
+const releasesToken = (process.env.LUCOS_GITHUB_RELEASES_TOKEN || '').trim();
+if (releasesToken) {
+	product.gitHubReleasesRepo = product.gitHubReleasesRepo || 'Lucos-IDE/Lucos-IDE';
+	product.gitHubReleasesToken = releasesToken;
+	console.log(`Patched product.json gitHubReleasesToken (repo=${product.gitHubReleasesRepo})`);
+} else {
+	console.log('LUCOS_GITHUB_RELEASES_TOKEN not set; GitHub Releases auto-update remains disabled (update.lucos.app fallback)');
+}
+
 fs.writeFileSync(productPath, `${JSON.stringify(product, null, '\t')}\n`);
 console.log(`Patched product.json lucosGatewayUrl -> ${gateway}`);
 
