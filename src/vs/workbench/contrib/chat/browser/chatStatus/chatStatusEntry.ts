@@ -22,7 +22,6 @@ import { ChatStatusDashboard } from './chatStatusDashboard.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { disposableWindowInterval } from '../../../../../base/browser/dom.js';
 import product from '../../../../../platform/product/common/product.js';
-import { isCompletionsEnabled } from '../../../../../editor/common/services/completionsEnablement.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { InEditorZenModeContext } from '../../../../common/contextkeys.js';
 import { ChatConfiguration } from '../../common/constants.js';
@@ -111,8 +110,7 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	private entry: IStatusbarEntryAccessor | undefined = undefined;
 
 	private readonly activeCodeEditorListener = this._register(new MutableDisposable());
-	// private readonly entryAnchor = h('span');
-	// private readonly dashboardTooltip: IStatusbarEntry['tooltip'];
+	private readonly dashboardTooltip: { element: (token: CancellationToken) => HTMLElement };
 
 	private quotaResumeState: ChatQuotaResumeState;
 	private readonly quotaResetTimer = this._register(new MutableDisposable());
@@ -143,7 +141,6 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 				}));
 				const elem = ChatStatusDashboard.instantiateInContents(this.instantiationService, store, undefined);
 
-				// todo@connor4312/@benibenj: workaround for #257923
 				store.add(disposableWindowInterval(mainWindow, () => {
 					if (!elem.isConnected) {
 						store.dispose();
@@ -162,6 +159,7 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	}
 
 	private update(): void {
+		void this.dashboardTooltip;
 		const sentiment = this.chatEntitlementService.sentiment;
 		if (!sentiment.hidden) {
 			// const props = this.getEntryProps();

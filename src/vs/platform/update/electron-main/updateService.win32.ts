@@ -34,6 +34,7 @@ import { IApplicationStorageMainService } from '../../storage/electron-main/stor
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, DisablementReason, IUpdate, State, StateType, UpdateType } from '../common/update.js';
 import { AbstractUpdateService, createUpdateURL, getUpdateRequestHeaders, IUpdateURLOptions, UpdateErrorClassification } from './abstractUpdateService.js';
+import { checkForUpdatesViaGitHub, downloadUpdateViaGitHub, getDefaultGitHubPackagePath, IGitHubUpdateContext, useGitHubReleases } from './gitHubUpdateHelper.js';
 
 interface IAvailableUpdate {
 	packagePath: string;
@@ -188,6 +189,10 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string | undefined {
+		if (useGitHubReleases(this.productService)) {
+			return `github://${this.productService.gitHubReleasesRepo}/${commit}`;
+		}
+
 		let platform = `win32-${process.arch}`;
 
 		if (getUpdateType() === UpdateType.Archive) {
@@ -204,14 +209,18 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 			return;
 		}
 
-		const internalOrg = this.getInternalOrg();
-		const background = !explicit && !internalOrg;
-		const url = this.buildUpdateFeedUrl(this.quality, pendingCommit ?? this.productService.commit!, { background, internalOrg });
-
-		// Only set CheckingForUpdates if we're not already in Overwriting state
 		if (this.state.type !== StateType.Overwriting) {
 			this.setState(State.CheckingForUpdates(explicit));
 		}
+
+		if (useGitHubReleases(this.productService)) {
+			void this.doCheckForUpdatesViaGitHub(explicit);
+			return;
+		}
+
+		const internalOrg = this.getInternalOrg();
+		const background = !explicit && !internalOrg;
+		const url = this.buildUpdateFeedUrl(this.quality, pendingCommit ?? this.productService.commit!, { background, internalOrg });
 
 		const headers = getUpdateRequestHeaders(this.productService.version);
 		this.requestService.request({ url, headers, callSite: 'updateService.win32.checkForUpdates' }, CancellationToken.None)
@@ -319,7 +328,58 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 			});
 	}
 
+	private getGitHubContext(): IGitHubUpdateContext {
+		return {
+			productService: this.productService,
+			requestService: this.requestService,
+			fileService: this.fileService,
+			logService: this.logService,
+			telemetryService: this.telemetryService,
+			getUpdateType: () => getUpdateType(),
+			setState: state => this.setState(state),
+			getState: () => this.state,
+			getOverwrite: () => this._overwrite,
+			getPackagePath: async update => {
+				const cachePath = await this.cachePath;
+				return getDefaultGitHubPackagePath(cachePath, update, '.exe');
+			},
+			onDownloadReady: async (update, packagePath, explicit) => {
+				this.availableUpdate = { packagePath };
+				await this.saveUpdateMetadata(update);
+				this.setState(State.Downloaded(update, explicit, this._overwrite));
+
+				const fastUpdatesEnabled = this.configurationService.getValue('update.enableWindowsBackgroundUpdates');
+				if (fastUpdatesEnabled && this.productService.target === 'user') {
+					await this.doApplyUpdate();
+				} else {
+					this.setState(State.Ready(update, explicit, this._overwrite));
+				}
+			},
+		};
+	}
+
+	private async doCheckForUpdatesViaGitHub(explicit: boolean): Promise<void> {
+		await checkForUpdatesViaGitHub(this.getGitHubContext(), explicit);
+
+		const state = this.state;
+		if (state.type !== StateType.AvailableForDownload) {
+			return;
+		}
+
+		if (!explicit && this.meteredConnectionService.isConnectionMetered) {
+			this.logService.info('update#doCheckForUpdatesViaGitHub - update available but skipping download because connection is metered');
+			return;
+		}
+
+		await downloadUpdateViaGitHub(this.getGitHubContext(), state, explicit);
+	}
+
 	protected override async doDownloadUpdate(state: AvailableForDownload): Promise<void> {
+		if (useGitHubReleases(this.productService)) {
+			await downloadUpdateViaGitHub(this.getGitHubContext(), state, true);
+			return;
+		}
+
 		if (state.update.url) {
 			this.nativeHostMainService.openExternal(undefined, state.update.url);
 		}

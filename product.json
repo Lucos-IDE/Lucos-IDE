@@ -6,6 +6,8 @@
 	"lucosGatewayUrl": "https://stagingapi.lucos.com",
 	"dataFolderName": ".lucos",
 	"updateUrl": "https://update.lucos.app",
+	"gitHubReleasesRepo": "Lucos-IDE/Lucos-IDE",
+	"gitHubReleasesToken": "",
 	"quality": "stable",
 	"sharedDataFolderName": ".lucos-shared",
 	"win32MutexName": "lucos",

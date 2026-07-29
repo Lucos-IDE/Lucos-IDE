@@ -20,8 +20,10 @@ import { StorageScope, StorageTarget } from '../../storage/common/storage.js';
 import { IApplicationStorageMainService } from '../../storage/electron-main/storageMainService.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, DisablementReason, IUpdateService, State, StateType, UpdateType } from '../common/update.js';
+import { isLatestVersionViaGitHub, useGitHubReleases } from './gitHubUpdateHelper.js';
 
 const LAST_KNOWN_VERSION_STORAGE_KEY = 'abstractUpdateService/lastKnownVersion';
+const UPDATE_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000;
 
 export interface IUpdateURLOptions {
 	readonly background?: boolean;
@@ -154,9 +156,15 @@ export abstract class AbstractUpdateService implements IUpdateService {
 			return;
 		}
 
-		if (!this.productService.updateUrl || !this.productService.commit) {
+		if (!this.productService.updateUrl && !useGitHubReleases(this.productService)) {
 			this.setState(State.Disabled(DisablementReason.MissingConfiguration));
-			this.logService.info('update#ctor - updates are disabled as there is no update URL');
+			this.logService.info('update#ctor - updates are disabled as there is no update URL or GitHub releases configuration');
+			return;
+		}
+
+		if (!this.productService.commit) {
+			this.setState(State.Disabled(DisablementReason.MissingConfiguration));
+			this.logService.info('update#ctor - updates are disabled as there is no product commit');
 			return;
 		}
 
@@ -176,7 +184,7 @@ export abstract class AbstractUpdateService implements IUpdateService {
 			return;
 		}
 
-		if (!this.buildUpdateFeedUrl(quality, this.productService.commit!)) {
+		if (!this.buildUpdateFeedUrl(quality, this.productService.commit!) && !useGitHubReleases(this.productService)) {
 			this.setState(State.Disabled(DisablementReason.InvalidConfiguration));
 			this.logService.info('update#ctor - updates are disabled as the update URL is badly formed');
 			return;
@@ -276,12 +284,11 @@ export abstract class AbstractUpdateService implements IUpdateService {
 		return updateMode === 'none' ? undefined : this.productService.quality;
 	}
 
-	private scheduleCheckForUpdates(delay = 60 * 60 * 1000): Promise<void> {
+	private scheduleCheckForUpdates(delay = UPDATE_CHECK_INTERVAL_MS): Promise<void> {
 		return timeout(delay)
 			.then(() => this.checkForUpdates(false))
 			.then(() => {
-				// Check again after 1 hour
-				return this.scheduleCheckForUpdates(60 * 60 * 1000);
+				return this.scheduleCheckForUpdates(UPDATE_CHECK_INTERVAL_MS);
 			});
 	}
 
@@ -419,6 +426,10 @@ export abstract class AbstractUpdateService implements IUpdateService {
 
 		if (mode === 'none') {
 			return undefined;
+		}
+
+		if (useGitHubReleases(this.productService)) {
+			return isLatestVersionViaGitHub(this.productService, this.requestService, this.logService, commit, token);
 		}
 
 		const url = this.buildUpdateFeedUrl(this.quality, commit ?? this.productService.commit!, { internalOrg: this.getInternalOrg() });
