@@ -86,18 +86,21 @@ jobs:
       quality: ${{ steps.pick.outputs.quality }}
       should_sign: ${{ steps.pick.outputs.should_sign }}
       is_production: ${{ steps.pick.outputs.is_production }}
+      product_version: ${{ steps.pick.outputs.product_version }}
     steps:
       - name: Pick environment
         id: pick
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
             echo "environment=production" >> "$GITHUB_OUTPUT"
             echo "gateway_url=https://api.lucos.com" >> "$GITHUB_OUTPUT"
             echo "channel=stable" >> "$GITHUB_OUTPUT"
             echo "quality=stable" >> "$GITHUB_OUTPUT"
             echo "should_sign=true" >> "$GITHUB_OUTPUT"
             echo "is_production=true" >> "$GITHUB_OUTPUT"
+            echo "product_version=${TAG#v}" >> "$GITHUB_OUTPUT"
           else
             # lucos-prod pushes and any non-tag release builds use staging.
             echo "environment=staging" >> "$GITHUB_OUTPUT"
@@ -106,6 +109,8 @@ jobs:
             echo "quality=insider" >> "$GITHUB_OUTPUT"
             echo "should_sign=true" >> "$GITHUB_OUTPUT"
             echo "is_production=false" >> "$GITHUB_OUTPUT"
+            # Insider builds keep package.json unless a semver is provided later.
+            echo "product_version=" >> "$GITHUB_OUTPUT"
           fi
           echo "Resolved environment for $GITHUB_REF"
 
@@ -322,6 +327,7 @@ jobs:
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
           LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)
@@ -547,6 +553,7 @@ jobs:
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
           LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)
@@ -751,6 +758,7 @@ jobs:
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
           LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)
@@ -1032,6 +1040,7 @@ jobs:
         env:
           LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
           LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
         run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
 
       - name: Compile (core-ci)
