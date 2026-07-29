@@ -134,6 +134,58 @@ suite('LucosAuthService', () => {
 		assert.strictEqual(requestStub.requests.length, 1);
 		assert.strictEqual(await secrets.get('lucos.cloud.refreshToken'), 'new-refresh');
 	});
+
+	test('fresh JWT re-hands to daemon without refresh when daemon lost credentials', async () => {
+		const secrets = new TestSecretStorageService();
+		disposables.add(secrets);
+		const daemon = disposables.add(new LucosDaemonServiceStub());
+		const requestStub = new StubRequestService();
+		const farJwt = makeJwt(Math.floor(Date.now() / 1000) + 3600);
+
+		await secrets.set('lucos.cloud.jwt', farJwt);
+		await secrets.set('lucos.cloud.refreshToken', 'refresh');
+		await secrets.set('lucos.cloud.userId', 'u1');
+		await secrets.set('lucos.cloud.email', 'u1@example.com');
+
+		const service = disposables.add(createAuthService(secrets, requestStub, daemon));
+		await service.restore();
+		assert.strictEqual(daemon.authStatus.state, LucosAuthState.Authenticated);
+
+		await daemon.clearCloudCredentials();
+		assert.strictEqual(daemon.authStatus.state, LucosAuthState.Unauthenticated);
+
+		const ok = await service.ensureFreshSession();
+
+		assert.strictEqual(ok, true);
+		assert.strictEqual(service.isSignedIn, true);
+		assert.strictEqual(daemon.authStatus.state, LucosAuthState.Authenticated);
+		assert.strictEqual(daemon.authStatus.userId, 'u1');
+		assert.strictEqual(requestStub.requests.length, 0);
+	});
+
+	test('daemon auth status loss while signed in triggers silent re-hand', async () => {
+		const secrets = new TestSecretStorageService();
+		disposables.add(secrets);
+		const daemon = disposables.add(new LucosDaemonServiceStub());
+		const requestStub = new StubRequestService();
+		const farJwt = makeJwt(Math.floor(Date.now() / 1000) + 3600);
+
+		await secrets.set('lucos.cloud.jwt', farJwt);
+		await secrets.set('lucos.cloud.refreshToken', 'refresh');
+		await secrets.set('lucos.cloud.userId', 'u1');
+
+		const service = disposables.add(createAuthService(secrets, requestStub, daemon));
+		await service.restore();
+		assert.strictEqual(daemon.authStatus.state, LucosAuthState.Authenticated);
+
+		await daemon.clearCloudCredentials();
+		// onDidChangeAuthStatus → ensureFreshSession is async; wait for re-hand.
+		await timeout(50);
+
+		assert.strictEqual(service.isSignedIn, true);
+		assert.strictEqual(daemon.authStatus.state, LucosAuthState.Authenticated);
+		assert.strictEqual(requestStub.requests.length, 0);
+	});
 });
 
 // ---------------------------------------------------------------------------

@@ -290,28 +290,19 @@
 	box-sizing: border-box;
 }
 
-/* Streaming / loading state */
+/* Assistant activity host: Thinking / Analyzing + post-turn summary */
+.lucos-turn-activity {
+	min-width: 0;
+	max-width: 100%;
+}
+
+/* Streaming / loading placeholder (status lives in .lucos-turn-activity) */
 .lucos-assistant-skeleton {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
 	padding: 4px 0 8px;
 	width: min(100%, 420px);
-}
-
-.lucos-assistant-skeleton-status {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 2px;
-	color: var(--vscode-descriptionForeground);
-	font-size: 12px;
-	font-weight: 500;
-	letter-spacing: 0.01em;
-}
-
-.lucos-assistant-skeleton-label {
-	animation: lucos-status-fade 1.6s ease-in-out infinite;
 }
 
 .lucos-assistant-skeleton-line {
@@ -327,16 +318,16 @@
 	animation: lucos-skeleton-shimmer 1.4s ease-in-out infinite;
 }
 
-.lucos-assistant-skeleton-line:nth-child(2) {
+.lucos-assistant-skeleton-line:nth-child(1) {
 	width: 92%;
 }
 
-.lucos-assistant-skeleton-line:nth-child(3) {
+.lucos-assistant-skeleton-line:nth-child(2) {
 	width: 76%;
 	animation-delay: 0.12s;
 }
 
-.lucos-assistant-skeleton-line:nth-child(4) {
+.lucos-assistant-skeleton-line:nth-child(3) {
 	width: 58%;
 	animation-delay: 0.24s;
 }
@@ -378,10 +369,10 @@
 	}
 }
 
-/* Activity timeline (live) + post-turn summary card */
+/* Activity timeline (live, in-bubble) + post-turn summary card */
 .lucos-timeline {
 	display: none;
-	padding: 4px 0;
+	padding: 2px 0 6px;
 	font-size: 12px;
 	color: var(--vscode-descriptionForeground);
 }

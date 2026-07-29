@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Action } from '../../../../base/common/actions.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { decodeBase64 } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -18,7 +19,7 @@ import { IProductService } from '../../../../platform/product/common/productServ
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { asJson, asText, IRequestService, isSuccess } from '../../../../platform/request/common/request.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
-import { LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
+import { LucosAuthState, LucosConnectionState } from '../../../../platform/lucos/common/lucosProtocol.js';
 import { LucosSettingId } from '../common/lucosConfiguration.js';
 import { ILucosAuthService, ILucosPendingVerification, ILucosSignedInUser } from '../common/lucosAuthService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
@@ -34,6 +35,9 @@ const USER_EMAIL_KEY = 'lucos.cloud.email';
 
 /** Proactive refresh window: refresh ~5 minutes before JWT `exp`. */
 export const REFRESH_SKEW_MS = 5 * 60 * 1000;
+
+/** How often to re-check daemon auth while signed in (daemon JWT is memory-only). */
+const DAEMON_AUTH_POLL_MS = 60 * 1000;
 
 interface IAuthResponse {
 	readonly success?: boolean;
@@ -94,7 +98,10 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	private _pendingGoogleTimeout: ReturnType<typeof setTimeout> | undefined;
 	private _syncInFlight: Promise<void> | undefined;
 	private _refreshInFlight: Promise<boolean> | undefined;
-	private _refreshTimer: ReturnType<typeof setTimeout> | undefined;
+	private _refreshTimer: Timeout | undefined;
+	private readonly _daemonAuthPoll: RunOnceScheduler;
+	/** Last observed daemon auth state — used to recover only on Authenticated → lost transitions. */
+	private _daemonAuthState: LucosAuthState = LucosAuthState.Unspecified;
 
 	constructor(
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
@@ -109,6 +116,14 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	) {
 		super();
 		this.restorePromise = new Promise<void>(resolve => { this._resolveRestorePromise = resolve; });
+		this._daemonAuthState = this.lucosDaemonService.authStatus.state;
+		this._daemonAuthPoll = this._register(new RunOnceScheduler(() => {
+			void this.pollDaemonAuthStatus().finally(() => {
+				if (this._isSignedIn && this.lucosDaemonService.connectionState === LucosConnectionState.Connected) {
+					this._daemonAuthPoll.schedule();
+				}
+			});
+		}, DAEMON_AUTH_POLL_MS));
 		this._register(toDisposable(() => {
 			clearTimeout(this._refreshTimer);
 			this._refreshTimer = undefined;
@@ -116,14 +131,42 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 
 		// Daemon keeps cloud JWT in memory only. Re-hand keychain credentials whenever it
 		// (re)connects so restart/reconnect does not leave IDE signed-in and daemon unauthenticated.
-		// Ensure the JWT is still fresh (or refresh it) before syncing.
 		this._register(this.lucosDaemonService.onDidChangeConnectionState(state => {
 			if (state === LucosConnectionState.Connected) {
-				void this.ensureFreshSession().then(ok => {
-					if (ok) {
-						void this.syncCredentialsToDaemon();
-					}
-				});
+				void this.ensureFreshSession();
+				if (this._isSignedIn) {
+					this.startDaemonAuthPoll();
+				}
+			} else {
+				this.stopDaemonAuthPoll();
+			}
+		}));
+
+		// When the daemon wipes its in-memory JWT (401 / expiry) while the IDE is still signed
+		// in, re-hand (and refresh if needed). Only react to Authenticated → lost to avoid loops
+		// when SetCloudCredentials itself returns unauthenticated.
+		this._register(this.lucosDaemonService.onDidChangeAuthStatus(status => {
+			const prev = this._daemonAuthState;
+			this._daemonAuthState = status.state;
+			if (!this._isSignedIn) {
+				return;
+			}
+			if (this.lucosDaemonService.connectionState !== LucosConnectionState.Connected) {
+				return;
+			}
+			const lost = status.state === LucosAuthState.Unauthenticated
+				|| status.state === LucosAuthState.TokenExpired;
+			if (lost && prev === LucosAuthState.Authenticated) {
+				this.logService.info('[LucosAuth] daemon auth lost; ensuring fresh session and re-handing credentials');
+				void this.ensureFreshSession();
+			}
+		}));
+
+		this._register(this.onDidChangeSignInState(signedIn => {
+			if (signedIn && this.lucosDaemonService.connectionState === LucosConnectionState.Connected) {
+				this.startDaemonAuthPoll();
+			} else {
+				this.stopDaemonAuthPoll();
 			}
 		}));
 	}
@@ -486,8 +529,8 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 	}
 
 	/**
-	 * Refresh access JWT if expired or within {@link REFRESH_SKEW_MS} of expiry.
-	 * Returns false if the session was cleared (hard fail).
+	 * Refresh access JWT if expired or within {@link REFRESH_SKEW_MS} of expiry, then
+	 * re-hand credentials to the daemon. Returns false if the session was cleared (hard fail).
 	 */
 	ensureFreshSession(): Promise<boolean> {
 		if (!this._refreshInFlight) {
@@ -510,10 +553,39 @@ export class LucosAuthService extends Disposable implements ILucosAuthService {
 		const now = Date.now();
 		if (exp === undefined || exp <= now + REFRESH_SKEW_MS) {
 			this.logService.info('[LucosAuth] ensureFreshSession: token expired or near expiry, refreshing');
+			// refreshSession → persistSession already hands credentials to the daemon.
 			return this.refreshSession();
 		}
 		this.scheduleRefresh(token);
+		// Daemon may have lost its memory-only JWT while the IDE keychain token is still valid.
+		await this.syncCredentialsToDaemon();
 		return true;
+	}
+
+	/** Poll daemon auth so silent in-memory JWT revocation is visible to the IDE. */
+	private startDaemonAuthPoll(): void {
+		if (!this._daemonAuthPoll.isScheduled()) {
+			this._daemonAuthPoll.schedule();
+		}
+	}
+
+	private stopDaemonAuthPoll(): void {
+		this._daemonAuthPoll.cancel();
+	}
+
+	private async pollDaemonAuthStatus(): Promise<void> {
+		if (!this._isSignedIn) {
+			return;
+		}
+		if (this.lucosDaemonService.connectionState !== LucosConnectionState.Connected) {
+			return;
+		}
+		try {
+			await this.lucosDaemonService.getAuthStatus();
+		} catch (error) {
+			this.logService.trace('[LucosAuth] daemon auth poll failed',
+				error instanceof Error ? error.message : String(error));
+		}
 	}
 
 	/** POST /api/v1/auth/refresh; on failure force-signs-out. */

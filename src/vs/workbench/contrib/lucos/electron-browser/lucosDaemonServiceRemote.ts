@@ -56,7 +56,10 @@ export class LucosDaemonServiceRemote extends Disposable implements ILucosDaemon
 	}
 
 	getAuthStatus(): Promise<ILucosAuthStatus> {
-		return this.nodeService.getAuthStatus();
+		return this.nodeService.getAuthStatus().then(status => {
+			this._authStatus = status;
+			return status;
+		});
 	}
 
 	setCloudCredentials(credentials: ILucosCloudCredentials): Promise<void> {

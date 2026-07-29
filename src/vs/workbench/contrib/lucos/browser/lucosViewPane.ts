@@ -58,6 +58,8 @@ export const LucosIsSignedInContext = new RawContextKey<boolean>('lucosIsSignedI
 interface ITurnElements {
 	readonly turn: HTMLElement;
 	readonly body: HTMLElement;
+	/** Live Thinking/Analyzing + post-turn activity summary (assistant turns only). */
+	readonly activityHost?: HTMLElement;
 	readonly footer?: HTMLElement;
 	patchContainer?: HTMLElement;
 	permissionContainer?: HTMLElement;
@@ -632,6 +634,9 @@ export class LucosChatViewPane extends ViewPane {
 			?? [...this.conversationService.activeSession.messages].reverse().find(m => m.role === LucosMessageRole.Assistant)?.id;
 		if (assistantId && this.turnElements.has(assistantId)) {
 			this.mountActiveTurnFooter(assistantId);
+			if (ui?.streamingAssistantId === assistantId) {
+				this.timeline.beginThinking();
+			}
 		}
 		if (ui?.pendingPatch && this.activePatchContainer) {
 			this.patchReview.render(this.activePatchContainer, ui.pendingPatch, {
@@ -877,7 +882,10 @@ export class LucosChatViewPane extends ViewPane {
 		if (!turn?.footer) {
 			return;
 		}
-		this.timeline.mountTo(turn.footer);
+		// Live Thinking/Analyzing lives in the assistant bubble (activityHost), not the footer.
+		if (turn.activityHost) {
+			this.timeline.mountTo(turn.activityHost);
+		}
 		if (!turn.patchContainer) {
 			turn.patchContainer = dom.append(turn.footer, dom.$('.lucos-chat-patch'));
 		}
@@ -1775,14 +1783,18 @@ export class LucosChatViewPane extends ViewPane {
 			? localize('lucos.chat.you', "You")
 			: localize('lucos.chat.assistant', "Lucos");
 
-		const body = dom.append(turn, dom.$('.lucos-turn-body'));
+		let activityHost: HTMLElement | undefined;
 		let footer: HTMLElement | undefined;
-
+		if (!isUser) {
+			// Stable host for Thinking/Analyzing so paintMessageBody can clear the answer body freely.
+			activityHost = dom.append(turn, dom.$('.lucos-turn-activity'));
+		}
+		const body = dom.append(turn, dom.$('.lucos-turn-body'));
 		if (!isUser) {
 			footer = dom.append(turn, dom.$('.lucos-turn-footer'));
 		}
 
-		this.turnElements.set(message.id, { turn, body, footer });
+		this.turnElements.set(message.id, { turn, body, activityHost, footer });
 		this.paintMessageBody(message);
 		this.setTypingIndicator(message.id, message.streaming);
 		this.scrollToBottom();
@@ -1832,20 +1844,14 @@ export class LucosChatViewPane extends ViewPane {
 		}
 	}
 
+	/**
+	 * Placeholder lines while waiting for the first answer tokens.
+	 * Thinking / Analyzing / file details live in the activity host (timeline), not here.
+	 */
 	private renderAssistantSkeleton(container: HTMLElement): void {
 		const skeleton = dom.append(container, dom.$('.lucos-assistant-skeleton'));
 		skeleton.setAttribute('aria-label', localize('lucos.chat.thinking', "Thinking"));
 		skeleton.setAttribute('role', 'status');
-
-		const status = dom.append(skeleton, dom.$('.lucos-assistant-skeleton-status'));
-		const pulse = dom.append(status, dom.$('span.lucos-timeline-pulse'));
-		pulse.setAttribute('aria-hidden', 'true');
-		for (let i = 0; i < 3; i++) {
-			dom.append(pulse, dom.$('span.lucos-timeline-pulse-dot'));
-		}
-		const label = dom.append(status, dom.$('span.lucos-assistant-skeleton-label'));
-		label.textContent = localize('lucos.chat.thinking', "Thinking");
-
 		for (let i = 0; i < 3; i++) {
 			dom.append(skeleton, dom.$('.lucos-assistant-skeleton-line'));
 		}
