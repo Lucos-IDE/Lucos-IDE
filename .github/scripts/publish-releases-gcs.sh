@@ -52,13 +52,13 @@ declare -A PLATFORM_FILES=(
   ["linux-appimage"]="lucos.AppImage"
 )
 
-# Fallback patterns for older artifact names still present in a run.
+# Fallback patterns for older artifact names and GitHub-contract versioned names.
 declare -A PLATFORM_FALLBACK_PATTERNS=(
-  ["macos-arm64"]="Lucos-darwin-arm64*.dmg"
-  ["macos-x64"]="Lucos-darwin-x64*.dmg"
-  ["windows"]="LucosSetup*.exe"
-  ["linux"]="*.deb"
-  ["linux-appimage"]="Lucos-*-linux-x64.AppImage"
+  ["macos-arm64"]="lucos-*-darwin-arm64.dmg"
+  ["macos-x64"]="lucos-*-darwin-x64.dmg"
+  ["windows"]="lucos-*-win32-x64.exe"
+  ["linux"]="lucos-*-linux-x64.deb"
+  ["linux-appimage"]="lucos-*-linux-x64.AppImage"
 )
 
 MANIFEST_DIR=$(mktemp -d)
