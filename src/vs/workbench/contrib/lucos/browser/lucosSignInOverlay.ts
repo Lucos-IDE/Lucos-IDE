@@ -41,6 +41,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 
 	private readonly overlay: HTMLElement;
 	private _resetOverlay: (() => void) | undefined;
+	private closeButton: HTMLButtonElement | undefined;
 
 	constructor(
 		@ILucosAuthService private readonly authService: ILucosAuthService,
@@ -83,6 +84,11 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 	private setVisible(visible: boolean): void {
 		this.logService.info(`[LucosSignIn] setVisible(${visible})`);
 		this.overlay.style.display = visible ? 'flex' : 'none';
+		// Show a cancel button only when the overlay is opened while the user is already signed
+		// in (e.g. "Switch Account" scenario). When not signed in the overlay must be completed.
+		if (this.closeButton) {
+			this.closeButton.style.display = (visible && this.authService.isSignedIn) ? 'flex' : 'none';
+		}
 	}
 
 	private buildOverlay(): HTMLElement {
@@ -99,6 +105,7 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 		// Card
 		const card = dom.append(overlay, document.createElement('div'));
 		Object.assign(card.style, {
+			position: 'relative',
 			background: 'var(--vscode-editorWidget-background)',
 			border: '1px solid var(--vscode-widget-border, rgba(127,127,127,0.2))',
 			borderRadius: '16px', boxShadow: '0 24px 64px var(--vscode-widget-shadow, rgba(0,0,0,0.3))',
@@ -106,6 +113,36 @@ export class LucosSignInOverlayContribution extends Disposable implements IWorkb
 			padding: '36px 32px', boxSizing: 'border-box',
 			display: 'flex', flexDirection: 'column',
 		});
+
+		// Cancel button — shown only when the overlay is opened while already signed in
+		// (e.g. after clicking "Switch Account"). Hidden when sign-in is required.
+		const closeBtn = document.createElement('button');
+		closeBtn.type = 'button';
+		closeBtn.setAttribute('aria-label', localize('lucos.signIn.cancel', "Cancel"));
+		Object.assign(closeBtn.style, {
+			position: 'absolute', top: '14px', right: '14px',
+			display: 'none', alignItems: 'center', justifyContent: 'center',
+			width: '28px', height: '28px', borderRadius: '6px',
+			background: 'none', border: 'none', cursor: 'pointer',
+			color: 'var(--vscode-descriptionForeground)',
+			padding: '0', fontSize: '18px', lineHeight: '1', fontFamily: 'inherit',
+		});
+		closeBtn.textContent = '\u00D7';
+		closeBtn.title = localize('lucos.signIn.cancelTooltip', "Cancel — stay signed in as current user");
+		this._register(dom.addDisposableListener(closeBtn, 'mouseover', () => {
+			closeBtn.style.background = 'var(--vscode-toolbar-hoverBackground, rgba(127,127,127,0.1))';
+			closeBtn.style.color = 'var(--vscode-foreground)';
+		}));
+		this._register(dom.addDisposableListener(closeBtn, 'mouseout', () => {
+			closeBtn.style.background = 'none';
+			closeBtn.style.color = 'var(--vscode-descriptionForeground)';
+		}));
+		this._register(dom.addDisposableListener(closeBtn, 'click', () => {
+			this.logService.info('[LucosSignIn] cancel button clicked — hiding overlay');
+			this.setVisible(false);
+		}));
+		card.appendChild(closeBtn);
+		this.closeButton = closeBtn;
 
 		// --- Shared helpers --------------------------------------------------
 

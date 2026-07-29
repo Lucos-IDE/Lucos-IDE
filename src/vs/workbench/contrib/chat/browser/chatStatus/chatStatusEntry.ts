@@ -5,10 +5,10 @@
 
 import './media/chatStatus.css';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
+// import { localize } from '../../../../../nls.js';
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
-import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService, ShowTooltipCommand, StatusbarAlignment, StatusbarEntryKind } from '../../../../services/statusbar/browser/statusbar.js';
-import { ChatEntitlement, ChatEntitlementContextKeys, ChatEntitlementService, IChatEntitlementService, isProUser } from '../../../../services/chat/common/chatEntitlementService.js';
+import { IStatusbarEntryAccessor } from '../../../../services/statusbar/browser/statusbar.js';
+import { ChatEntitlement, ChatEntitlementContextKeys, ChatEntitlementService, IChatEntitlementService } from '../../../../services/chat/common/chatEntitlementService.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { disposableLongTimeout, disposableTimeout } from '../../../../../base/common/async.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
@@ -20,8 +20,7 @@ import { IInlineCompletionsService } from '../../../../../editor/browser/service
 
 import { ChatStatusDashboard } from './chatStatusDashboard.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { $ as h, disposableWindowInterval } from '../../../../../base/browser/dom.js';
-import { isNewUser } from './chatStatus.js';
+import { disposableWindowInterval } from '../../../../../base/browser/dom.js';
 import product from '../../../../../platform/product/common/product.js';
 import { isCompletionsEnabled } from '../../../../../editor/common/services/completionsEnablement.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
@@ -112,8 +111,8 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	private entry: IStatusbarEntryAccessor | undefined = undefined;
 
 	private readonly activeCodeEditorListener = this._register(new MutableDisposable());
-	private readonly entryAnchor = h('span');
-	private readonly dashboardTooltip: IStatusbarEntry['tooltip'];
+	// private readonly entryAnchor = h('span');
+	// private readonly dashboardTooltip: IStatusbarEntry['tooltip'];
 
 	private quotaResumeState: ChatQuotaResumeState;
 	private readonly quotaResetTimer = this._register(new MutableDisposable());
@@ -123,7 +122,7 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	constructor(
 		@IChatEntitlementService private readonly chatEntitlementService: ChatEntitlementService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@IStatusbarService private readonly statusbarService: IStatusbarService,
+		// @IStatusbarService private readonly statusbarService: IStatusbarService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IInlineCompletionsService private readonly completionsService: IInlineCompletionsService,
@@ -165,12 +164,12 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 	private update(): void {
 		const sentiment = this.chatEntitlementService.sentiment;
 		if (!sentiment.hidden) {
-			const props = this.getEntryProps();
-			if (this.entry) {
-				this.entry.update(props);
-			} else {
-				this.entry = this.statusbarService.addEntry(props, 'chat.statusBarEntry', StatusbarAlignment.RIGHT, { location: { id: 'status.editor.mode', priority: 100.1 }, alignment: StatusbarAlignment.RIGHT });
-			}
+			// const props = this.getEntryProps();
+			// if (this.entry) {
+			// 	this.entry.update(props);
+			// } else {
+			// 	this.entry = this.statusbarService.addEntry(props, 'chat.statusBarEntry', StatusbarAlignment.RIGHT, { location: { id: 'status.editor.mode', priority: 100.1 }, alignment: StatusbarAlignment.RIGHT });
+			// }
 		} else {
 			this.entry?.dispose();
 			this.entry = undefined;
@@ -327,79 +326,92 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 
 	//#endregion
 
-	private getEntryProps(): IStatusbarEntry {
-		let text = '$(sparkle)';
-		let ariaLabel = localize('chatStatusAria', "Lucos AI status");
-		let kind: StatusbarEntryKind | undefined;
+	// private getEntryProps(): IStatusbarEntry {
+	// 	let text = '$(sparkle)';
+	// 	let ariaLabel = localize('chatStatusAria', "Lucos AI status");
+	// 	let kind: StatusbarEntryKind | undefined;
 
-		if (isNewUser(this.chatEntitlementService)) {
-			const entitlement = this.chatEntitlementService.entitlement;
+	// 	if (isNewUser(this.chatEntitlementService)) {
+	// 		const entitlement = this.chatEntitlementService.entitlement;
 
-			// Sign-in affordance intentionally omitted for Lucos — fall through to the default sparkle entry.
-			if (
-				this.chatEntitlementService.sentiment.later ||	// user skipped setup
-				entitlement === ChatEntitlement.Available ||	// user is entitled
-				isProUser(entitlement) ||						// user is already pro
-				entitlement === ChatEntitlement.Free			// user is already free
-			) {
-				// no-op: keep default Lucos AI status entry
-			}
-		} else {
-			const quotas = this.chatEntitlementService.quotas;
+	// 		// Sign In
+	// 		if (
+	// 			this.chatEntitlementService.sentiment.later ||	// user skipped setup
+	// 			entitlement === ChatEntitlement.Available ||	// user is entitled
+	// 			isProUser(entitlement) ||						// user is already pro
+	// 			entitlement === ChatEntitlement.Free			// user is already free
+	// 		) {
+	// 			// return this.getSetupEntryProps();
+	// 		}
+	// 	} else {
+	// 		const quotas = this.chatEntitlementService.quotas;
 
-			// Disabled
-			if (this.chatEntitlementService.sentiment.disabled || this.chatEntitlementService.sentiment.untrusted) {
-				text = '$(sparkle)';
-				ariaLabel = localize('copilotDisabledStatus', "Lucos AI disabled");
-			}
+	// 		// Disabled
+	// 		if (this.chatEntitlementService.sentiment.disabled || this.chatEntitlementService.sentiment.untrusted) {
+	// 			text = '$(sparkle)';
+	// 			ariaLabel = localize('copilotDisabledStatus', "Lucos AI disabled");
+	// 		}
 
-			// Signed out — Lucos keeps the default sparkle entry (no Copilot sign-in command).
-			else if (this.chatEntitlementService.entitlement === ChatEntitlement.Unknown) {
-				// no-op: keep default Lucos AI status entry
-			}
+	// 		// Signed out — keep showing Sign-in affordance even when BYOK models are present
+	// 		// so air-gapped users can still authenticate to unlock the full Copilot experience.
+	// 		else if (this.chatEntitlementService.entitlement === ChatEntitlement.Unknown) {
+	// 			// return this.getSetupEntryProps();
+	// 		}
 
-			// Quota Exceeded (all tracked plans share the premium chat quota)
-			else if (isTrackedEntitlement(this.chatEntitlementService.entitlement) && isQuotaBlocked(quotas)) {
-				const quotaWarning = localize('chatQuotaExceededStatus', "Quota reached");
-				text = `$(chat-sparkle-warning) ${quotaWarning}`;
-				ariaLabel = quotaWarning;
-				kind = 'prominent';
-			}
+	// 		// Quota Exceeded (all tracked plans share the premium chat quota)
+	// 		else if (isTrackedEntitlement(this.chatEntitlementService.entitlement) && isQuotaBlocked(quotas)) {
+	// 			const quotaWarning = localize('chatQuotaExceededStatus', "Quota reached");
+	// 			text = `$(chat-sparkle-warning) ${quotaWarning}`;
+	// 			ariaLabel = quotaWarning;
+	// 			kind = 'prominent';
+	// 		}
 
-			// Lucos AI Resumed (limit reset after the user was previously blocked)
-			else if (this.quotaResumeState === 'resumed') {
-				const resumedLabel = localize('chatResumedStatus', "Lucos AI Resumed");
-				text = `$(sparkle) ${resumedLabel}`;
-				ariaLabel = resumedLabel;
-				kind = 'prominent';
-			}
+	// 		// Lucos AI Resumed (limit reset after the user was previously blocked)
+	// 		else if (this.quotaResumeState === 'resumed') {
+	// 			const resumedLabel = localize('chatResumedStatus', "Lucos AI Resumed");
+	// 			text = `$(sparkle) ${resumedLabel}`;
+	// 			ariaLabel = resumedLabel;
+	// 			kind = 'prominent';
+	// 		}
 
-			// Completions Disabled
-			else if (this.editorService.activeTextEditorLanguageId && !isCompletionsEnabled(this.configurationService, this.editorService.activeTextEditorLanguageId)) {
-				text = '$(sparkle)';
-				ariaLabel = localize('completionsDisabledStatus', "Inline suggestions disabled");
-			}
+	// 		// Completions Disabled
+	// 		else if (this.editorService.activeTextEditorLanguageId && !isCompletionsEnabled(this.configurationService, this.editorService.activeTextEditorLanguageId)) {
+	// 			text = '$(sparkle)';
+	// 			ariaLabel = localize('completionsDisabledStatus', "Inline suggestions disabled");
+	// 		}
 
-			// Completions Snoozed
-			else if (this.completionsService.isSnoozing()) {
-				text = '$(sparkle)';
-				ariaLabel = localize('completionsSnoozedStatus', "Inline suggestions snoozed");
-			}
-		}
+	// 		// Completions Snoozed
+	// 		else if (this.completionsService.isSnoozing()) {
+	// 			text = '$(sparkle)';
+	// 			ariaLabel = localize('completionsSnoozedStatus', "Inline suggestions snoozed");
+	// 		}
+	// 	}
 
-		const baseResult = {
-			name: localize('chatStatus', "Lucos AI Status"),
-			text,
-			ariaLabel,
-			command: ShowTooltipCommand,
-			showInAllWindows: true,
-			kind,
-			content: this.entryAnchor,
-			tooltip: this.dashboardTooltip
-		} satisfies IStatusbarEntry;
+	// 	const baseResult = {
+	// 		name: localize('chatStatus', "Lucos AI Status"),
+	// 		text,
+	// 		ariaLabel,
+	// 		command: ShowTooltipCommand,
+	// 		showInAllWindows: true,
+	// 		kind,
+	// 		content: this.entryAnchor,
+	// 		tooltip: this.dashboardTooltip
+	// 	} satisfies IStatusbarEntry;
 
-		return baseResult;
-	}
+	// 	return baseResult;
+	// }
+
+	// private getSetupEntryProps(): IStatusbarEntry {
+	// 	return {
+	// 		name: localize('chatStatus', "Lucos AI Status"),
+	// 		text: '$(sparkle)',
+	// 		ariaLabel: localize('chatStatusAria', "Lucos AI status"),
+	// 		command: CHAT_SETUP_ACTION_ID,
+	// 		showInAllWindows: true,
+	// 		kind: undefined,
+	// 		content: this.entryAnchor,
+	// 	};
+	// }
 
 	override dispose(): void {
 		super.dispose();
