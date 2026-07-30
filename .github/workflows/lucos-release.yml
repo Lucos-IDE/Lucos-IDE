@@ -3,17 +3,18 @@
 # Triggers
 # ────────────────────────────────────────────────────────────────────────────
 #  pull_request → main / release/*  : compile + unit tests  (fast gate)
-#  push → lucos-prod                 : signed builds + GCS insider (staging API)
+#  push → lucos-develop              : signed builds + GCS insider (staging API)
 #  push → v* tags                    : signed builds + GCS stable (production API)
 #                                      + GitHub Release
+#  push → lucos-prod                 : no release build (promotion / tag source only)
 #
-# Same signing path for lucos-prod and tags. Environment differs by gateway URL
+# Same signing path for lucos-develop and tags. Environment differs by gateway URL
 # and GCS channel only (insider vs stable) on the shared GCS_RELEASES_BUCKET.
 #
 # This is the canonical Lucos shipping workflow. Do not also run lucos-deploy.yml
 # on the same tags (that workflow is disabled for Lucos releases).
 #
-# Secrets required for signed release builds (lucos-prod + tag pushes)
+# Secrets required for signed release builds (lucos-develop + tag pushes)
 # ────────────────────────────────────────────────────────────────────────────
 #  macOS:
 #    APPLE_CERT_P12                      base64-encoded Developer ID cert (.p12)
@@ -29,12 +30,14 @@
 #    SM_HOST                              (optional variable) default https://clientauth.one.digicert.com
 #  Windows (legacy software PFX — optional fallback):
 #    WINDOWS_PFX_DATA                     base64-encoded authenticode cert (.pfx)
-#    WINDOWS_PFX_PASSWORD                 password for the .pfx
+#    WINDOWS_PFX_PASSWORD                 password for that .pfx
 #  Daemon (required — local-daemon is a private sibling repo):
 #    LUCOS_DAEMON_TOKEN                   PAT with Contents: Read on Lucos-IDE/local-daemon
 #      OR
 #    LUCOS_DAEMON_SSH_KEY                 read-only deploy key private key for that repo
 #    (GITHUB_TOKEN cannot checkout sibling private repos — API returns Not Found)
+#    Staging (lucos-develop) checks out local-daemon@develop
+#    Production tags check out local-daemon@main
 #  In-app updates (private GitHub Releases):
 #    LUCOS_GITHUB_RELEASES_TOKEN          fine-grained PAT with Contents: Read on Lucos-IDE/Lucos-IDE
 #  GCS public downloads (Path A — storage.googleapis.com):
@@ -49,7 +52,7 @@ on:
   pull_request:
     branches: [main, 'release/*']
   push:
-    branches: [lucos-prod]
+    branches: [lucos-develop]
     tags: ['v[0-9]+.*']
 
 concurrency:
@@ -74,8 +77,8 @@ env:
 jobs:
 
   # ── 0. Resolve staging vs production ───────────────────────────────────────
-  # lucos-prod → staging API + insider channel (still fully signed)
-  # v* tags    → production API + stable channel + GitHub Release
+  # lucos-develop → staging API + insider channel (still fully signed)
+  # v* tags       → production API + stable channel + GitHub Release
   resolve-env:
     name: Resolve environment
     runs-on: ubuntu-22.04
@@ -87,6 +90,7 @@ jobs:
       should_sign: ${{ steps.pick.outputs.should_sign }}
       is_production: ${{ steps.pick.outputs.is_production }}
       product_version: ${{ steps.pick.outputs.product_version }}
+      daemon_ref: ${{ steps.pick.outputs.daemon_ref }}
     steps:
       - name: Pick environment
         id: pick
@@ -101,8 +105,9 @@ jobs:
             echo "should_sign=true" >> "$GITHUB_OUTPUT"
             echo "is_production=true" >> "$GITHUB_OUTPUT"
             echo "product_version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "daemon_ref=main" >> "$GITHUB_OUTPUT"
           else
-            # lucos-prod pushes and any non-tag release builds use staging.
+            # lucos-develop pushes and any non-tag release builds use staging.
             echo "environment=staging" >> "$GITHUB_OUTPUT"
             echo "gateway_url=https://stagingapi.lucos.com" >> "$GITHUB_OUTPUT"
             echo "channel=insider" >> "$GITHUB_OUTPUT"
@@ -111,6 +116,7 @@ jobs:
             echo "is_production=false" >> "$GITHUB_OUTPUT"
             # Insider builds keep package.json unless a semver is provided later.
             echo "product_version=" >> "$GITHUB_OUTPUT"
+            echo "daemon_ref=develop" >> "$GITHUB_OUTPUT"
           fi
           echo "Resolved environment for $GITHUB_REF"
 
@@ -182,7 +188,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compile & hygiene checks
-        # Full upstream gate for PRs only. lucos-prod + v* tags are artifact
+        # Full upstream gate for PRs only. lucos-develop + v* tags are artifact
         # builds: hygiene/eslint cancel parallel jobs and block shipping.
         if: github.event_name == 'pull_request'
         run: |
@@ -198,7 +204,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Artifact builds (lucos-prod / v* tags): platform jobs each re-run core-ci.
+      # Artifact builds (lucos-develop / v* tags): platform jobs each re-run core-ci.
       # Keep this gate light to avoid OOM (exit 143) and hygiene cancellations.
       - name: Compile (build gate)
         if: github.event_name != 'pull_request'
@@ -356,6 +362,7 @@ jobs:
           platform: darwin
           arch: arm64
           gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
           token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
           ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
@@ -374,7 +381,7 @@ jobs:
           test -f "$PROTO"
           ls -la "$DAEMON" "$PROTO"
 
-      # Non-release refs only. lucos-prod + tags use Developer ID signing below.
+      # Non-release refs only. lucos-develop + tags use Developer ID signing below.
       - name: Ad-hoc codesign macOS app (unsigned builds)
         if: needs.resolve-env.outputs.should_sign != 'true'
         run: |
@@ -580,6 +587,7 @@ jobs:
           platform: darwin
           arch: x64
           gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
           token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
           ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
@@ -598,7 +606,7 @@ jobs:
           test -f "$PROTO"
           ls -la "$DAEMON" "$PROTO"
 
-      # Non-release refs only. lucos-prod + tags use Developer ID signing below.
+      # Non-release refs only. lucos-develop + tags use Developer ID signing below.
       - name: Ad-hoc codesign macOS app (unsigned builds)
         if: needs.resolve-env.outputs.should_sign != 'true'
         run: |
@@ -790,6 +798,7 @@ jobs:
           platform: win32
           arch: x64
           gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
           token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
           ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
@@ -921,7 +930,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Windows system-setup installer
-        # Signed builds (lucos-prod + tags): pass --sign-lucos when credentials are present.
+        # Signed builds (lucos-develop + tags): pass --sign-lucos when credentials are present.
         shell: pwsh
         run: |
           $shouldSign = $env:SHOULD_SIGN -eq 'true'
@@ -1067,6 +1076,7 @@ jobs:
           platform: linux
           arch: x64
           gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
           token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
           ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
 
@@ -1152,7 +1162,7 @@ jobs:
   test-smoke:
     name: Smoke Tests (macOS arm64)
     needs: [build-darwin-arm64]
-    if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/lucos-prod'
+    if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/lucos-develop'
     runs-on: macos-14
     env:
       VSCODE_ARCH: arm64
@@ -1260,7 +1270,7 @@ jobs:
 
   # ── 8. Publish to GCS (+ GitHub Release on tags) ────────────────────────────
   # Tags → channel=stable (production API, signed)
-  # lucos-prod push → channel=insider (staging API, signed)
+  # lucos-develop push → channel=insider (staging API, signed)
   publish-releases:
     name: Publish releases (GCS)
     needs:
@@ -1269,7 +1279,7 @@ jobs:
       - build-darwin-x64
       - build-win32-x64
       - build-linux-x64
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/lucos-prod')
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/lucos-develop')
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout

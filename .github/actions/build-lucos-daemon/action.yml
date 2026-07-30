@@ -24,6 +24,12 @@ inputs:
       Used when token is empty.
     required: false
     default: ''
+  ref:
+    description: >
+      Git ref to checkout in Lucos-IDE/local-daemon (branch, tag, or SHA).
+      Staging (lucos-develop) uses develop; production tags use main.
+    required: false
+    default: 'main'
 
 runs:
   using: composite
@@ -65,6 +71,7 @@ runs:
       uses: actions/checkout@v4
       with:
         repository: Lucos-IDE/local-daemon
+        ref: ${{ inputs.ref }}
         path: .build/src/local-daemon
         token: ${{ inputs.token }}
 
@@ -73,6 +80,7 @@ runs:
       uses: actions/checkout@v4
       with:
         repository: Lucos-IDE/local-daemon
+        ref: ${{ inputs.ref }}
         path: .build/src/local-daemon
         ssh-key: ${{ inputs.ssh-key }}
 

@@ -1,8 +1,9 @@
 # Lucos IDE -- legacy staging/production deploy workflow (DISABLED for auto triggers)
 #
 # Lucos shipping now uses `.github/workflows/lucos-release.yml`:
-#   - push lucos-prod → unsigned builds + GCS insider
-#   - tag v*          → signed builds + GCS stable + GitHub Release
+#   - push lucos-develop → signed builds + GCS insider (staging API)
+#   - tag v*             → signed builds + GCS stable + GitHub Release
+#   - push lucos-prod    → no automatic release build
 #
 # This file is kept for optional manual runs only (workflow_dispatch).
 # Do not re-enable push/tag triggers here or you will double-build releases.
