@@ -44,10 +44,16 @@ export const LUCOS_MODELS = [
 	{ id: 'gpt-5-mini', label: 'GPT-5 Mini' },
 	{ id: 'gpt-5-nano', label: 'GPT-5 Nano' },
 	{ id: 'gpt-5-pro', label: 'GPT-5 Pro' },
+	// GPT-4 series (optional OpenAI)
+	{ id: 'gpt-4o', label: 'GPT-4o' },
+	{ id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
 	// Gemini
 	{ id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
 	{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
 	{ id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+	// DeepSeek
+	{ id: 'deepseek-chat', label: 'DeepSeek Chat' },
+	{ id: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
 ] as const;
 
 export type LucosModelId = typeof LUCOS_MODELS[number]['id'];
