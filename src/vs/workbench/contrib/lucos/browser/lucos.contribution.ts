@@ -22,6 +22,8 @@ import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution 
 import { LUCOS_DEFAULT_MODEL, LUCOS_MODEL_IDS, LucosSettingId } from '../common/lucosConfiguration.js';
 import { ILucosConversationService } from '../common/lucosConversationService.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
+import { ILucosEntitlementsService } from '../common/lucosEntitlementsService.js';
+import { LucosEntitlementsService } from './lucosEntitlementsService.js';
 import { ILucosChatRequestService } from '../common/lucosChatRequestService.js';
 import { ILucosIndexService } from '../common/lucosIndexService.js';
 import { LUCOS_FOCUS_CHAT_COMMAND_ID, LUCOS_VIEW_CONTAINER_ID } from './lucosCommands.js';
@@ -60,6 +62,8 @@ registerSingleton(ILucosChatRequestService, LucosChatRequestService, Instantiati
 registerSingleton(ILucosIndexService, LucosIndexService, InstantiationType.Delayed);
 // Auth mode / cloud feature-gating (TW-178/197).
 registerSingleton(ILucosAuthModeService, LucosAuthModeService, InstantiationType.Delayed);
+// Seat plan, credit balance and degrade state (TW-252).
+registerSingleton(ILucosEntitlementsService, LucosEntitlementsService, InstantiationType.Delayed);
 //#endregion
 
 //#region Settings (TW-168)
