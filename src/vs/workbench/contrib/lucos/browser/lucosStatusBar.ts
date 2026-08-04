@@ -14,6 +14,7 @@ import { ILucosIndexService } from '../common/lucosIndexService.js';
 import { LucosConnectionState, LucosIndexState } from '../../../../platform/lucos/common/lucosProtocol.js';
 import { LUCOS_FOCUS_CHAT_COMMAND_ID } from './lucosCommands.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
+import { ILucosEntitlementsService, LucosDegradeMode } from '../common/lucosEntitlementsService.js';
 
 export class LucosStatusBarContribution extends Disposable implements IWorkbenchContribution {
 
@@ -27,6 +28,7 @@ export class LucosStatusBarContribution extends Disposable implements IWorkbench
 		@ILucosIndexService private readonly lucosIndexService: ILucosIndexService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ILucosAuthService private readonly lucosAuthService: ILucosAuthService,
+		@ILucosEntitlementsService private readonly lucosEntitlementsService: ILucosEntitlementsService,
 	) {
 		super();
 
@@ -36,6 +38,10 @@ export class LucosStatusBarContribution extends Disposable implements IWorkbench
 		this._register(this.lucosDaemonService.onDidChangeAuthStatus(() => this.update()));
 		this._register(this.lucosIndexService.onDidChangeStatus(() => this.update()));
 		this._register(this.lucosAuthService.onDidChangeSignInState(() => this.update()));
+		this._register(this.lucosEntitlementsService.onDidChangeEntitlements(() => this.update()));
+
+		// Kick off the first read so credits appear without waiting for a chat turn.
+		void this.lucosEntitlementsService.get();
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(LucosSettingId.AgentModel)) {
 				this.update();
@@ -85,18 +91,66 @@ export class LucosStatusBarContribution extends Disposable implements IWorkbench
 					: localize('lucos.status.offline', "Lucos: offline");
 		const modelSuffix = model ? ` · ${model}` : '';
 
+		// Credit balance and degrade state (TW-258). Only shown once entitlements have
+		// loaded, so the status bar never displays a misleading "$0.00" while fetching.
+		const entitlements = this.lucosEntitlementsService.current;
+		const credits = entitlements?.credits;
+		let creditSuffix = '';
+		let creditTooltip = '';
+
+		if (credits?.unlimited) {
+			// Pro has no token limit — showing a balance would be meaningless, and
+			// remainingUsd is null, so nothing is rendered beyond the plan name.
+			creditTooltip = localize(
+				'lucos.status.tooltipUnlimited',
+				"{0} plan: unlimited usage.",
+				entitlements?.planName ?? entitlements?.planCode ?? '',
+			);
+		} else if (credits && credits.remainingUsd !== null) {
+			const remaining = credits.remainingUsd.toFixed(2);
+			switch (entitlements?.degrade?.mode) {
+				case LucosDegradeMode.Degraded:
+					icon = '$(warning)';
+					creditSuffix = localize('lucos.status.creditsOut', " · credits used up");
+					creditTooltip = localize(
+						'lucos.status.tooltipDegraded',
+						"Included credits for this period are used up. Chat still works on the basic model, but agent tools are off. Upgrade for a larger pool.",
+					);
+					break;
+				case LucosDegradeMode.Warn:
+					creditSuffix = localize('lucos.status.creditsLow', " · ${0} left", remaining);
+					creditTooltip = localize(
+						'lucos.status.tooltipWarn',
+						"You have used {0}% of this period's credits.",
+						Math.round(credits.percentUsed),
+					);
+					break;
+				default:
+					creditSuffix = localize('lucos.status.credits', " · ${0}", remaining);
+					creditTooltip = localize(
+						'lucos.status.tooltipCredits',
+						"{0} plan: ${1} of ${2} remaining this period.",
+						entitlements?.planName ?? entitlements?.planCode ?? '',
+						remaining,
+						// Non-null in this branch: unlimited plans are handled above.
+						((credits.includedUsd ?? 0) + credits.bonusUsd).toFixed(2),
+					);
+					break;
+			}
+		}
+
 		// Tooltip always shows the user identity when available.
 		const userInfo = userLabel ? localize('lucos.status.tooltipUser', "User: {0}. ", userLabel) : '';
 		const tooltipBase = userInfo + localize('lucos.status.tooltipConn', "Connection: {0}. Index: {1}.", this.lucosDaemonService.connectionState, index.state);
 
 		return {
 			name: localize('lucos.status.name', "Lucos AI"),
-			text: `${icon} ${label}${indexSuffix}${modelSuffix}`,
+			text: `${icon} ${label}${indexSuffix}${modelSuffix}${creditSuffix}`,
 			ariaLabel: localize('lucos.status.aria', "Lucos AI: {0}, index {1}, model {2}", label, index.state, model),
 			command: LUCOS_FOCUS_CHAT_COMMAND_ID,
 			tooltip: index.state === LucosIndexState.Failed && index.message
 				? localize('lucos.status.tooltipFailed', "Lucos AI - indexing failed: {0}. Click to open chat.", index.message)
-				: localize('lucos.status.tooltip', "Lucos AI - click to open chat. {0}", tooltipBase),
+				: localize('lucos.status.tooltip', "Lucos AI - click to open chat. {0} {1}", tooltipBase, creditTooltip),
 		};
 	}
 }
