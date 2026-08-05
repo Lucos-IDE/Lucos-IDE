@@ -1343,6 +1343,22 @@
 	font-weight: 600;
 }
 
+/* Model not included in the seat's plan (TW-252). Dimmed but still visible. */
+.lucos-composer-dropdown-item.locked .lucos-composer-dropdown-label {
+	opacity: 0.55;
+}
+
+.lucos-composer-dropdown-hint {
+	flex-shrink: 0;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.4px;
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+}
+
 .lucos-composer-dropdown-label {
 	flex: 1;
 	min-width: 0;

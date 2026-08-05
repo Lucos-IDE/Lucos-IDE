@@ -38,6 +38,7 @@ import { ILucosChatRequest, ILucosChatRequestService } from '../common/lucosChat
 import { windowChatHistory } from '../common/lucosChatHistory.js';
 import { resolveCompletionAppend, resolveEmptyAssistantFallback, sanitizeAssistantText, stripToolNarration, isToolNarrationOnly } from '../common/lucosAssistantSummary.js';
 import { ILucosAuthService } from '../common/lucosAuthService.js';
+import { ILucosEntitlementsService } from '../common/lucosEntitlementsService.js';
 import { ILucosDaemonService } from '../common/lucosDaemonService.js';
 import { ILucosPatchProposal, ILucosPermissionRequest, ILucosWorkspaceContext, IStartAgentTaskRequest, LucosConnectionState, LucosPermissionMode, LucosTaskEventKind } from '../../../../platform/lucos/common/lucosProtocol.js';
 import { taskPayloadString } from '../../../../platform/lucos/common/lucosTaskPayload.js';
@@ -89,6 +90,10 @@ interface IComposerDropdownItem {
 	readonly id: string;
 	readonly label: string;
 	readonly checked?: boolean;
+	/** Not available on the seat's plan — rendered locked, selection blocked (TW-252). */
+	readonly locked?: boolean;
+	/** Short reason shown beside a locked item, e.g. "Pro". */
+	readonly hint?: string;
 	readonly run: () => void | Promise<void>;
 }
 
@@ -190,6 +195,7 @@ export class LucosChatViewPane extends ViewPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+		@ILucosEntitlementsService private readonly lucosEntitlementsService: ILucosEntitlementsService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -410,15 +416,34 @@ export class LucosChatViewPane extends ViewPane {
 			return;
 		}
 		const current = (this.configurationService.getValue<string>(LucosSettingId.AgentModel) ?? '').trim();
-		this.showComposerDropdown(this.modelButton, LUCOS_MODELS.map(m => ({
-			id: m.id,
-			label: m.label,
-			checked: m.id === current,
-			run: async () => {
-				await this.configurationService.updateValue(LucosSettingId.AgentModel, m.id);
-				this.updateModelButton();
-			},
-		})));
+		const entitlements = this.lucosEntitlementsService.current;
+		const upgradeUrl = entitlements?.links?.upgrade;
+
+		this.showComposerDropdown(this.modelButton, LUCOS_MODELS.map(m => {
+			const locked = !this.lucosEntitlementsService.isModelAllowed(m.id);
+			return {
+				id: m.id,
+				label: m.label,
+				checked: !locked && m.id === current,
+				locked,
+				hint: locked ? localize('lucos.model.upgradeHint', "Upgrade") : undefined,
+				run: async () => {
+					if (locked) {
+						// Send them somewhere useful instead of silently doing nothing.
+						if (upgradeUrl) {
+							await this.openerService.open(URI.parse(upgradeUrl));
+						}
+						return;
+					}
+					await this.configurationService.updateValue(LucosSettingId.AgentModel, m.id);
+					this.updateModelButton();
+				},
+			};
+		}));
+
+		// The picker may be the first thing opened after an upgrade — repaint if the
+		// plan turns out to have changed.
+		void this.lucosEntitlementsService.get();
 	}
 
 	private showComposerDropdown(anchor: HTMLElement, items: readonly IComposerDropdownItem[]): void {
@@ -445,7 +470,19 @@ export class LucosChatViewPane extends ViewPane {
 
 					const label = dom.append(option, dom.$('span.lucos-composer-dropdown-label'));
 					label.textContent = item.label;
-					if (item.checked) {
+
+					if (item.locked) {
+						// Shown but not selectable: hiding paid models entirely would leave
+						// users unaware the upgrade exists.
+						option.classList.add('locked');
+						option.setAttribute('aria-disabled', 'true');
+						if (item.hint) {
+							const hint = dom.append(option, dom.$('span.lucos-composer-dropdown-hint'));
+							hint.textContent = item.hint;
+						}
+						const lock = dom.append(option, dom.$('span.lucos-composer-dropdown-check'));
+						lock.classList.add(...ThemeIcon.asClassNameArray(Codicon.lock));
+					} else if (item.checked) {
 						const check = dom.append(option, dom.$('span.lucos-composer-dropdown-check'));
 						check.classList.add(...ThemeIcon.asClassNameArray(Codicon.check));
 					}
@@ -454,7 +491,10 @@ export class LucosChatViewPane extends ViewPane {
 						e.preventDefault();
 						e.stopPropagation();
 						void item.run();
-						this.contextViewService.hideContextView();
+						// Keep a locked item's menu open so the user sees why nothing happened.
+						if (!item.locked) {
+							this.contextViewService.hideContextView();
+						}
 					}));
 				}
 
