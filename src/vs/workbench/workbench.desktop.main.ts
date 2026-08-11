@@ -128,6 +128,9 @@ import './contrib/debug/electron-browser/extensionHostDebugService.js';
 import './contrib/extensions/electron-browser/extensions.contribution.js';
 import './contrib/extensions/electron-browser/devtoolsExtensionHost.contribution.js';
 
+// Lucos AI (desktop daemon)
+import './contrib/lucos/electron-browser/lucos.contribution.js';
+
 // Issues
 import './contrib/issue/electron-browser/issue.contribution.js';
 
@@ -186,8 +189,8 @@ import './contrib/remoteTunnel/electron-browser/remoteTunnel.contribution.js';
 import './contrib/chat/electron-browser/chat.contribution.js';
 import './contrib/chat/electron-browser/tunnelHost.contribution.js';
 
-// Copilot Voice
-import './contrib/agentsVoice/electron-browser/agentsVoiceNativeCommands.js';
+// LUCOS_FORK: Copilot Agents Voice native commands disabled for Lucos.
+// import './contrib/agentsVoice/electron-browser/agentsVoiceNativeCommands.js';
 
 // Encryption
 import './contrib/encryption/electron-browser/encryption.contribution.js';

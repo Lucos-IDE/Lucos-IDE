@@ -20,10 +20,11 @@ const require = createRequire(import.meta.url);
 
 const repoPath = path.dirname(import.meta.dirname);
 const commit = getVersion(repoPath);
-const buildPath = (arch: string) => path.join(path.dirname(repoPath), `VSCode-win32-${arch}`);
+const buildPath = (arch: string) => path.join(path.dirname(repoPath), `Lucos-win32-${arch}`);
 const setupDir = (arch: string, target: string) => path.join(repoPath, '.build', `win32-${arch}`, `${target}-setup`);
 const innoSetupPath = path.join(path.dirname(path.dirname(require.resolve('innosetup'))), 'bin', 'ISCC.exe');
 const signWin32Path = path.join(repoPath, 'build', 'azure-pipelines', 'common', 'sign-win32.ts');
+const signLucosPath = path.join(repoPath, 'build', 'azure-pipelines', 'common', 'sign-lucos.ts');
 
 function packageInnoSetup(iss: string, options: { definitions?: Record<string, unknown> }, cb: (err?: Error | null) => void) {
 	const definitions = options.definitions || {};
@@ -32,8 +33,14 @@ function packageInnoSetup(iss: string, options: { definitions?: Record<string, u
 		definitions['Debug'] = 'true';
 	}
 
-	if (process.argv.some(arg => arg === '--sign')) {
+	const useEsrp = process.argv.some(arg => arg === '--sign');
+	const useLucos = process.argv.some(arg => arg === '--sign-lucos');
+
+	if (useEsrp) {
 		definitions['Sign'] = 'true';
+	}
+	if (useLucos) {
+		definitions['SignLucos'] = 'true';
 	}
 
 	const keys = Object.keys(definitions);
@@ -44,7 +51,8 @@ function packageInnoSetup(iss: string, options: { definitions?: Record<string, u
 	const args = [
 		iss,
 		...defs,
-		`/sesrp=node ${signWin32Path} $f`
+		`/sesrp=node ${signWin32Path} $f`,
+		...(useLucos ? [`/slucos=node ${signLucosPath} $f`] : []),
 	];
 
 	cp.spawn(innoSetupPath, args, { stdio: ['ignore', 'inherit', 'inherit'] })
@@ -112,12 +120,25 @@ function buildWin32Setup(arch: string, target: string): task.CallbackTask {
 		};
 
 		if (quality === 'stable' || quality === 'insider') {
-			definitions['AppxPackage'] = `${quality === 'stable' ? 'code' : 'code_insider'}_${arch}.appx`;
-			definitions['AppxPackageDll'] = `${quality === 'stable' ? 'code' : 'code_insider'}_explorer_command_${arch}.dll`;
-			definitions['AppxPackageName'] = `${product.win32AppUserModelId}`;
-			const ctxMenu = (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu;
-			if (ctxMenu && ctxMenu[arch]) {
-				definitions['FileExplorerContextMenuCLSID'] = ctxMenu[arch].clsid;
+			const appxName = `${quality === 'stable' ? 'code' : 'code_insider'}_${arch}.appx`;
+			const appxDll = `${quality === 'stable' ? 'code' : 'code_insider'}_explorer_command_${arch}.dll`;
+			const appxPath = path.join(sourcePath, 'appx', appxName);
+			const appxDllPath = path.join(sourcePath, 'appx', appxDll);
+			// Only wire AppX into the installer when both artifacts exist. Lucos CI
+			// builds them in a dedicated step; skipping avoids Inno Setup aborting
+			// on missing Source files when AppX prep was not run.
+			if (fs.existsSync(appxPath) && fs.existsSync(appxDllPath)) {
+				definitions['AppxPackage'] = appxName;
+				definitions['AppxPackageDll'] = appxDll;
+				definitions['AppxPackageName'] = `${product.win32AppUserModelId}`;
+				const ctxMenu = (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu;
+				if (ctxMenu && ctxMenu[arch]) {
+					// dllhost ProcessId uses braced GUID form
+					const raw = ctxMenu[arch].clsid.replace(/^\{|\}$/g, '');
+					definitions['FileExplorerContextMenuCLSID'] = `{${raw}}`;
+				}
+			} else {
+				console.warn(`[win32-setup] Skipping AppX packaging (missing ${appxPath} and/or ${appxDllPath})`);
 			}
 		}
 
@@ -153,3 +174,17 @@ function updateIcon(executablePath: string): task.CallbackTask {
 
 task.task(task.define('vscode-win32-x64-inno-updater', task.series(copyInnoUpdater('x64'), updateIcon(path.join(buildPath('x64'), 'tools', 'inno_updater.exe')))));
 task.task(task.define('vscode-win32-arm64-inno-updater', task.series(copyInnoUpdater('arm64'), updateIcon(path.join(buildPath('arm64'), 'tools', 'inno_updater.exe')))));
+
+// Lucos-branded aliases for win32 setup tasks
+for (const arch of ['x64', 'arm64']) {
+	for (const target of ['system', 'user']) {
+		const src = task.task(`vscode-win32-${arch}-${target}-setup`) as task.Task;
+		if (src) {
+			task.task(task.define(`lucos-win32-${arch}-${target}-setup`, src));
+		}
+	}
+	const innoUpdater = task.task(`vscode-win32-${arch}-inno-updater`) as task.Task;
+	if (innoUpdater) {
+		task.task(task.define(`lucos-win32-${arch}-inno-updater`, innoUpdater));
+	}
+}

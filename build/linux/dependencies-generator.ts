@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import { spawnSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { getChromiumSysroot, getVSCodeSysroot } from './debian/install-sysroot.ts';
 import { generatePackageDeps as generatePackageDepsDebian } from './debian/calculate-deps.ts';
@@ -20,7 +21,11 @@ import product from '../../product.json' with { type: 'json' };
 // If true, we fail the build if there are new dependencies found during that task.
 // The reference dependencies, which one has to update when the new dependencies
 // are valid, are in dep-lists.ts
-const FAIL_BUILD_FOR_NEW_DEPENDENCIES: boolean = true;
+//
+// Lucos: keep false so .deb packaging uses freshly computed deps without
+// requiring a dep-lists.ts sync whenever Electron/native modules drift
+// (and when tunnel CLI is omitted from the package).
+const FAIL_BUILD_FOR_NEW_DEPENDENCIES: boolean = false;
 
 // Based on https://source.chromium.org/chromium/chromium/src/+/refs/tags/148.0.7778.271:chrome/installer/linux/BUILD.gn;l=64-80
 // and the Linux Archive build
@@ -55,9 +60,14 @@ export async function getDependencies(packageType: 'deb' | 'rpm', buildDir: stri
 
 	const appPath = path.join(buildDir, applicationName);
 	// Add the native modules
-	const files = findResult.stdout.toString().trimEnd().split('\n');
-	// Add the tunnel binary.
-	files.push(path.join(buildDir, 'bin', product.tunnelApplicationName));
+	const files = findResult.stdout.toString().trimEnd().split('\n').filter(Boolean);
+	// Add the tunnel binary when present (Lucos builds may omit cli-tunnel).
+	const tunnelPath = path.join(buildDir, 'bin', product.tunnelApplicationName);
+	if (fs.existsSync(tunnelPath)) {
+		files.push(tunnelPath);
+	} else {
+		console.warn(`[getDependencies] Tunnel binary not found, skipping: ${tunnelPath}`);
+	}
 	// Add the main executable.
 	files.push(appPath);
 	// Add chrome sandbox and crashpad handler.

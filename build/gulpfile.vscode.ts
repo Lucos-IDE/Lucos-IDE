@@ -36,6 +36,7 @@ import globCallback from 'glob';
 import rceditCallback from 'rcedit';
 import { spawnTsgo } from './lib/tsgo.ts';
 import { runEsbuildTranspile, runEsbuildBundle } from './lib/esbuild.ts';
+import { getDaemonStream } from './lib/daemon.ts';
 
 
 const glob = promisify(globCallback);
@@ -118,7 +119,10 @@ const vscodeResourceIncludes = [
 	'out-build/vs/editor/common/languages/highlights/*.scm',
 
 	// Tree Sitter injection queries
-	'out-build/vs/editor/common/languages/injections/*.scm'
+	'out-build/vs/editor/common/languages/injections/*.scm',
+
+	// Lucos daemon gRPC proto (loaded by main process via FileAccess)
+	'out-build/vs/platform/lucos/node/lucosDaemon.embedded.proto'
 ];
 
 const vscodeResources = [
@@ -407,8 +411,8 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				'resources/win32/vue.ico',
 				'resources/win32/xml.ico',
 				'resources/win32/yaml.ico',
-				'resources/win32/code_70x70.png',
-				'resources/win32/code_150x150.png'
+				'resources/win32/72x72.png',
+				'resources/win32/144x144.png'
 			], { base: '.' }));
 		} else if (platform === 'linux') {
 			const policyDest = gulp.src('.build/policies/linux/**', { base: '.build/policies/linux' })
@@ -422,6 +426,12 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 			const policyDest = gulp.src('.build/policies/darwin/**', { base: '.build/policies/darwin' })
 				.pipe(rename(f => f.dirname = `policies/${f.dirname}`));
 			all = es.merge(all, shortcut, policyDest);
+		}
+
+		// Bundle Lucos daemon binary into app resources.
+		const daemonStream = getDaemonStream(platform, arch === 'armhf' ? 'arm' : arch);
+		if (daemonStream) {
+			all = es.merge(all, daemonStream);
 		}
 
 		const electronConfig = {
@@ -508,7 +518,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 					.pipe(replace('@@ApplicationIdShort@@', product.win32RegValueName))
 					.pipe(replace('@@ApplicationExe@@', product.nameShort + '.exe'))
 					.pipe(replace('@@FileExplorerContextMenuID@@', quality === 'stable' ? 'OpenWithCode' : 'OpenWithCodeInsiders'))
-					.pipe(replace('@@FileExplorerContextMenuCLSID@@', (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu![arch].clsid))
+					.pipe(replace('@@FileExplorerContextMenuCLSID@@', ((product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu?.[arch]?.clsid ?? '').replace(/^\{|\}$/g, '')))
 					.pipe(replace('@@FileExplorerContextMenuDLL@@', `${quality === 'stable' ? 'code' : 'code_insider'}_explorer_command_${arch}.dll`))
 					.pipe(rename(f => f.dirname = `appx/manifest`)));
 			}
@@ -534,7 +544,15 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 function hasAuthenticodeSignature(filePath: string): Promise<boolean> {
 	return new Promise((resolve, reject) => {
 		const proc = cp.spawn('signtool.exe', ['verify', '/pa', filePath]);
-		proc.on('error', reject);
+		proc.on('error', (err: NodeJS.ErrnoException) => {
+			// Unsigned CI runners often lack the Windows SDK / signtool on PATH.
+			// Treat that as "no signature" so rcedit can still patch version resources.
+			if (err.code === 'ENOENT') {
+				resolve(false);
+				return;
+			}
+			reject(err);
+		});
 		proc.on('exit', code => resolve(code === 0));
 	});
 }
@@ -563,6 +581,21 @@ async function stripAuthenticodeSignature(filePath: string): Promise<void> {
 	});
 }
 
+function isWindowsNativeBinaryPath(relPath: string): boolean {
+	const normalized = relPath.replace(/\\/g, '/').toLowerCase();
+	// Copilot / agent SDKs ship multi-arch natives; only patch Windows PE files.
+	if (/(^|\/)(darwin|linux|linuxmusl|freebsd|android)(-|\/)/.test(normalized)) {
+		return false;
+	}
+	if (/-(darwin|linux|linuxmusl|freebsd)(\/|$)/.test(normalized)) {
+		return false;
+	}
+	if (/\/(x64|arm64|ia32|arm)-(darwin|linux|linuxmusl)\//.test(normalized)) {
+		return false;
+	}
+	return true;
+}
+
 function patchWin32DependenciesTask(destinationFolderName: string) {
 	const cwd = path.join(path.dirname(root), destinationFolderName);
 
@@ -573,7 +606,7 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 			glob('**/rg.exe', { cwd }),
 			glob('**/tgrep.exe', { cwd }),
 			glob('**/*explorer_command*.dll', { cwd }),
-		])).flatMap(o => o);
+		])).flatMap(o => o).filter(isWindowsNativeBinaryPath);
 		const packageJson = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'package.json'), 'utf8'));
 		const product = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'product.json'), 'utf8'));
 		const baseVersion = packageJson.version.replace(/-.*$/, '');
@@ -583,19 +616,23 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 			const fullPath = path.join(cwd, dep);
 
 			await stripAuthenticodeSignature(fullPath);
-			await rcedit(fullPath, {
-				'file-version': baseVersion,
-				'version-string': {
-					'CompanyName': 'Microsoft Corporation',
-					'FileDescription': product.nameLong,
-					'FileVersion': packageJson.version,
-					'InternalName': basename,
-					'LegalCopyright': 'Copyright (C) 2026 Microsoft. All rights reserved',
-					'OriginalFilename': basename,
-					'ProductName': product.nameLong,
-					'ProductVersion': packageJson.version,
-				}
-			});
+			try {
+				await rcedit(fullPath, {
+					'file-version': baseVersion,
+					'version-string': {
+						'CompanyName': 'Microsoft Corporation',
+						'FileDescription': product.nameLong,
+						'FileVersion': packageJson.version,
+						'InternalName': basename,
+						'LegalCopyright': 'Copyright (C) 2026 Microsoft. All rights reserved',
+						'OriginalFilename': basename,
+						'ProductName': product.nameLong,
+						'ProductVersion': packageJson.version,
+					}
+				});
+			} catch (err) {
+				console.warn(`[patchWin32Dependencies] Skipping ${dep}: ${err instanceof Error ? err.message : String(err)}`);
+			}
 		});
 
 		await Promise.all(patchPromises);
@@ -638,7 +675,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 
 	const [vscode, vscodeMin] = ['', 'min'].map(minified => {
 		const sourceFolderName = `out-vscode${dashed(minified)}`;
-		const destinationFolderName = `VSCode${dashed(platform)}${dashed(arch)}`;
+		const destinationFolderName = `Lucos${dashed(platform)}${dashed(arch)}`;
 
 		const packageTasks: task.Task[] = [
 			compileNativeExtensionsBuildTask,
@@ -734,4 +771,30 @@ task.task('vscode-translations-import', function () {
 	}));
 });
 
+// #endregion
+
+// #region Lucos-branded task aliases
+// These aliases mirror the upstream vscode-* tasks under lucos-* names so CI
+// workflows and local developer commands can use Lucos-specific nomenclature
+// without touching the upstream gulpfile build logic.
+[
+	// packaging (min-ci = compile already done by core-ci; uses pre-built out-vscode-min)
+	'darwin-arm64-min-ci',
+	'darwin-x64-min-ci',
+	'win32-x64-min-ci',
+	'win32-x64-system-setup',
+	'win32-x64-user-setup',
+	'linux-x64-min-ci',
+	'linux-arm64-min-ci',
+	// deb packaging
+	'linux-x64-prepare-deb',
+	'linux-x64-build-deb',
+	'linux-arm64-prepare-deb',
+	'linux-arm64-build-deb',
+].forEach(suffix => {
+	const src = task.task(`vscode-${suffix}`) as task.Task;
+	if (src) {
+		task.task(task.define(`lucos-${suffix}`, src));
+	}
+});
 // #endregion

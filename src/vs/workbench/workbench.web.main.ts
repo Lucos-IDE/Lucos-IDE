@@ -137,6 +137,9 @@ registerSingleton(IAgentHostDebugLogsExportService, BrowserAgentHostDebugLogsExp
 // Logs
 import './contrib/logs/browser/logs.contribution.js';
 
+// Lucos AI (web daemon stub)
+import './contrib/lucos/browser/lucos.stub.contribution.js';
+
 // Localization
 import './contrib/localization/browser/localization.contribution.js';
 

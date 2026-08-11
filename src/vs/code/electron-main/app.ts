@@ -45,6 +45,8 @@ import { IEnvironmentMainService } from '../../platform/environment/electron-mai
 import { isLaunchedFromCli } from '../../platform/environment/node/argvHelper.js';
 import { getResolvedShellEnv } from '../../platform/shell/node/shellEnv.js';
 import { IExtensionHostStarter, ipcExtensionHostStarterChannelName } from '../../platform/extensions/common/extensionHostStarter.js';
+import { ILucosDaemonNodeService, ipcLucosDaemonChannelName } from '../../platform/lucos/common/lucosDaemonNode.js';
+import { LucosDaemonNodeService } from '../../platform/lucos/node/lucosDaemonNodeService.js';
 import { ExtensionHostStarter } from '../../platform/extensions/electron-main/extensionHostStarter.js';
 import { IExternalTerminalMainService } from '../../platform/externalTerminal/electron-main/externalTerminal.js';
 import { LinuxExternalTerminalService, MacExternalTerminalService, WindowsExternalTerminalService } from '../../platform/externalTerminal/node/externalTerminalService.js';
@@ -397,6 +399,23 @@ export class CodeApplication extends Disposable {
 			}
 
 			return callback({ cancel: false });
+		});
+
+		//#endregion
+
+		//#region Allow CORS for the Lucos gateway
+
+		// The workbench renderer (vscode-file://vscode-app) calls the Lucos gateway REST APIs.
+		// Electron's Chromium enforces CORS for that origin, so we inject the necessary
+		// Access-Control headers into gateway responses before the CORS check runs.
+		session.defaultSession.webRequest.onHeadersReceived({ urls: ['https://*.lucos.com/*', 'http://localhost:*/*'] }, (details, callback) => {
+			const responseHeaders = details.responseHeaders ?? Object.create(null);
+
+			responseHeaders['Access-Control-Allow-Origin'] = ['*'];
+			responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
+			responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization'];
+
+			return callback({ cancel: false, responseHeaders });
 		});
 
 		//#endregion
@@ -1148,6 +1167,9 @@ export class CodeApplication extends Disposable {
 		// Extension Host Starter
 		services.set(IExtensionHostStarter, new SyncDescriptor(ExtensionHostStarter));
 
+		// Lucos Daemon (gRPC bridge to the local daemon)
+		services.set(ILucosDaemonNodeService, new SyncDescriptor(LucosDaemonNodeService));
+
 		// Storage
 		services.set(IStorageMainService, new SyncDescriptor(StorageMainService));
 		services.set(IApplicationStorageMainService, new SyncDescriptor(ApplicationStorageMainService));
@@ -1382,6 +1404,14 @@ export class CodeApplication extends Disposable {
 		// Extension Host Starter
 		const extensionHostStarterChannel = ProxyChannel.fromService(accessor.get(IExtensionHostStarter), disposables);
 		mainProcessElectronServer.registerChannel(ipcExtensionHostStarterChannelName, extensionHostStarterChannel);
+
+		// Lucos Daemon
+		const lucosDaemonService = accessor.get(ILucosDaemonNodeService);
+		const lucosDaemonChannel = ProxyChannel.fromService(lucosDaemonService, disposables);
+		mainProcessElectronServer.registerChannel(ipcLucosDaemonChannelName, lucosDaemonChannel);
+		disposables.add(this.lifecycleMainService.onWillShutdown(e => {
+			e.join('lucosDaemon', lucosDaemonService.shutdownOwnedDaemon());
+		}));
 
 		// Utility Process Worker
 		const utilityProcessWorkerChannel = ProxyChannel.fromService(accessor.get(IUtilityProcessWorkerMainService), disposables);

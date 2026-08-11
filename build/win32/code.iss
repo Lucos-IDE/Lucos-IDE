@@ -43,6 +43,10 @@ CloseApplications=force
 #ifdef Sign
 SignTool=esrp
 #endif
+#ifdef SignLucos
+SignTool=lucos $f
+SignToolRetryCount=3
+#endif
 
 #if "user" == InstallTarget
 DefaultDirName={userpf}\{#DirName}

@@ -31,7 +31,7 @@ function getEntitlementsForFile(filePath: string): string {
 	return path.join(baseDir, 'azure-pipelines', 'darwin', 'app-entitlements.plist');
 }
 
-async function retrySignOnKeychainError<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
+async function retrySignOnTransientError<T>(fn: () => Promise<T>, maxRetries: number = 5): Promise<T> {
 	let lastError: Error | undefined;
 
 	for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -40,19 +40,23 @@ async function retrySignOnKeychainError<T>(fn: () => Promise<T>, maxRetries: num
 		} catch (error) {
 			lastError = error as Error;
 
-			// Check if this is the specific keychain error we want to retry
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			const isKeychainError = errorMessage.includes('The specified item could not be found in the keychain.');
+			const isTransient =
+				errorMessage.includes('The specified item could not be found in the keychain.') ||
+				// Apple TSA outages / runner network blips — common and usually succeed on retry.
+				errorMessage.includes('The timestamp service is not available') ||
+				errorMessage.includes('timestamp service') ||
+				/A timestamp was expected but was not found/i.test(errorMessage);
 
-			if (!isKeychainError || attempt === maxRetries) {
+			if (!isTransient || attempt === maxRetries) {
 				throw error;
 			}
 
-			console.log(`Signing attempt ${attempt} failed with keychain error, retrying...`);
+			console.log(`Signing attempt ${attempt}/${maxRetries} failed with transient error, retrying...`);
 			console.log(`Error: ${errorMessage}`);
 
-			const delay = 1000 * Math.pow(2, attempt - 1);
-			console.log(`Waiting ${Math.round(delay)}ms before retry ${attempt}/${maxRetries}...`);
+			const delay = 2000 * Math.pow(2, attempt - 1); // 2s, 4s, 8s, 16s
+			console.log(`Waiting ${Math.round(delay)}ms before retry...`);
 			await new Promise(resolve => setTimeout(resolve, delay));
 		}
 	}
@@ -73,7 +77,7 @@ async function main(buildDir?: string): Promise<void> {
 		throw new Error('$AGENT_TEMPDIRECTORY not set');
 	}
 
-	const appRoot = path.join(buildDir, `VSCode-darwin-${arch}`);
+	const appRoot = path.join(buildDir, `Lucos-darwin-${arch}`);
 	const appName = product.nameLong + '.app';
 	const infoPlistPath = path.resolve(appRoot, appName, 'Contents', 'Info.plist');
 
@@ -131,7 +135,7 @@ async function main(buildDir?: string): Promise<void> {
 		]);
 	}
 
-	await retrySignOnKeychainError(() => sign(appOpts));
+	await retrySignOnTransientError(() => sign(appOpts));
 }
 
 if (import.meta.main) {

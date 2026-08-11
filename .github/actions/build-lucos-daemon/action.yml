@@ -1,0 +1,128 @@
+name: 'Build & stage lucos-daemon'
+description: Checkout Lucos-IDE/local-daemon, build the Go binary, stage it under .build/daemon/
+
+inputs:
+  platform:
+    description: Target platform (darwin, linux, win32)
+    required: true
+  arch:
+    description: Target arch (arm64, x64)
+    required: true
+  gateway-url:
+    description: Cloud gateway URL baked into the daemon binary default
+    required: false
+    default: 'https://api.lucos.com'
+  token:
+    description: >
+      PAT with contents:read on Lucos-IDE/local-daemon.
+      GITHUB_TOKEN cannot access sibling private repos (API returns Not Found).
+    required: false
+    default: ''
+  ssh-key:
+    description: >
+      Optional deploy key (private key) with read access to Lucos-IDE/local-daemon.
+      Used when token is empty.
+    required: false
+    default: ''
+  ref:
+    description: >
+      Git ref to checkout in Lucos-IDE/local-daemon (branch, tag, or SHA).
+      Staging (lucos-develop) uses develop; production tags use main.
+    required: false
+    default: 'main'
+
+runs:
+  using: composite
+  steps:
+    - name: Require access to local-daemon
+      shell: bash
+      env:
+        LUCOS_DAEMON_TOKEN: ${{ inputs.token }}
+        LUCOS_DAEMON_SSH_KEY: ${{ inputs.ssh-key }}
+      run: |
+        set -euo pipefail
+        if [[ -z "${LUCOS_DAEMON_TOKEN}" && -z "${LUCOS_DAEMON_SSH_KEY}" ]]; then
+          cat <<'EOF' >&2
+        ::error::Cannot build lucos-daemon: no credentials for Lucos-IDE/local-daemon.
+
+        GITHUB_TOKEN only covers Lucos-IDE/Lucos-IDE. Sibling private repos need one of:
+
+          1) Repo secret LUCOS_DAEMON_TOKEN
+             - Fine-grained PAT (or classic) with Contents: Read on Lucos-IDE/local-daemon
+             - Organization approval if the org requires it
+
+          2) Repo secret LUCOS_DAEMON_SSH_KEY
+             - Read-only deploy key on Lucos-IDE/local-daemon
+             - Private key stored as the secret value
+
+        Then re-run this workflow.
+        EOF
+          exit 1
+        fi
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.x'
+        cache: false
+
+    - name: Checkout local-daemon (token)
+      if: ${{ inputs.token != '' }}
+      uses: actions/checkout@v4
+      with:
+        repository: Lucos-IDE/local-daemon
+        ref: ${{ inputs.ref }}
+        path: .build/src/local-daemon
+        token: ${{ inputs.token }}
+
+    - name: Checkout local-daemon (deploy key)
+      if: ${{ inputs.token == '' && inputs.ssh-key != '' }}
+      uses: actions/checkout@v4
+      with:
+        repository: Lucos-IDE/local-daemon
+        ref: ${{ inputs.ref }}
+        path: .build/src/local-daemon
+        ssh-key: ${{ inputs.ssh-key }}
+
+    - name: Build and stage daemon binary
+      shell: bash
+      env:
+        LUCOS_GATEWAY_URL: ${{ inputs.gateway-url }}
+      run: |
+        set -euo pipefail
+        platform='${{ inputs.platform }}'
+        arch='${{ inputs.arch }}'
+        gateway_url="${LUCOS_GATEWAY_URL:-https://api.lucos.com}"
+        case "${platform}" in
+          darwin) goos=darwin ;;
+          linux)  goos=linux ;;
+          win32)  goos=windows ;;
+          *) echo "Unsupported platform: ${platform}" >&2; exit 1 ;;
+        esac
+        case "${arch}" in
+          x64)   goarch=amd64 ;;
+          arm64) goarch=arm64 ;;
+          *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;;
+        esac
+        ext=''
+        if [[ "${platform}" == 'win32' ]]; then
+          ext='.exe'
+        fi
+        out_name="lucos-daemon-${platform}-${arch}${ext}"
+        mkdir -p .build/daemon
+        (
+          cd .build/src/local-daemon
+          export GOWORK=off
+          version="$(git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)"
+          ldflags="-X github.com/Lucos-IDE/local-daemon/internal/version.Version=${version}"
+          ldflags+=" -X github.com/Lucos-IDE/local-daemon/internal/config.defaultGatewayURL=${gateway_url}"
+          echo "Building daemon with gateway default: ${gateway_url}"
+          GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
+            go build -ldflags "${ldflags}" -o "../../daemon/${out_name}" ./cmd/lucos-daemon
+        )
+        if [[ "${platform}" != 'win32' ]]; then
+          chmod +x ".build/daemon/${out_name}"
+        fi
+        test -f ".build/daemon/${out_name}"
+        ls -la ".build/daemon/${out_name}"
+        echo "Staged ${out_name}"

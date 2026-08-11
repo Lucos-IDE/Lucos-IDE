@@ -8,3 +8,4 @@ import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js'
 
 export const gettingStartedUncheckedCodicon = registerIcon('getting-started-step-unchecked', Codicon.circleLargeOutline, localize('gettingStartedUnchecked', "Used to represent walkthrough steps which have not been completed"));
 export const gettingStartedCheckedCodicon = registerIcon('getting-started-step-checked', Codicon.passFilled, localize('gettingStartedChecked', "Used to represent walkthrough steps which have been completed"));
+export const welcomePageIcon = registerIcon('welcome-page-icon', Codicon.sparkle, localize('welcomePageIcon', "Icon for the Welcome page editor tab"));

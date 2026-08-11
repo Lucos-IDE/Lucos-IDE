@@ -280,6 +280,11 @@ function verifyNpmIntegrity(tarballPath: string, integrity: string | undefined):
  * Linux x64 host, so product packaging also restores target-platform SDK
  * natives from the selected @github/copilot-{platform} package.
  *
+ * Note: published `@github/copilot` is a thin npm-loader stub; the real `sdk/`
+ * tree lives in `@github/copilot-{platform}`. Local installs sometimes overlay
+ * that content into `@github/copilot`, but CI/source packaging must seed `sdk/`
+ * from the platform package when the stub is all that was copied.
+ *
  * Note: `node-pty` is no longer shimmed. The copilot CLI SDK resolves
  * `node-pty` from the embedder (VS Code) via `hostRequire` and falls back to
  * its bundled copy only if that fails.
@@ -295,10 +300,7 @@ export function prepareBuiltInCopilotRipgrepShim(platform: string, arch: string,
 
 	const extensionNodeModules = path.join(builtInCopilotExtensionDir, 'node_modules');
 	const copilotBase = path.join(extensionNodeModules, '@github', 'copilot');
-	const copilotSdkBase = path.join(copilotBase, 'sdk');
-	if (!fs.existsSync(copilotSdkBase)) {
-		throw new Error(`[prepareBuiltInCopilotRipgrepShim] Copilot SDK directory not found at ${copilotSdkBase}`);
-	}
+	const copilotSdkBase = ensureBuiltInCopilotSdkDirectory(copilotBase, copilotPackagePlatformArch, appNodeModulesDir);
 	materializeBuiltInCopilotSdkPlatformFiles(copilotPackagePlatformArch, tgrepPlatformArch, copilotBase, appNodeModulesDir);
 	pruneNonTargetCopilotSdkPrebuilds(copilotPackagePlatformArch, path.join(copilotSdkBase, 'prebuilds'), copilotPlatforms);
 	pruneNonTargetCopilotSdkPrebuilds(tgrepPlatformArch, path.join(copilotSdkBase, path.join('tgrep', 'bin')), copilotTgrepPlatforms);
@@ -330,6 +332,32 @@ export function prepareBuiltInCopilotRipgrepShim(platform: string, arch: string,
 	} catch (err) {
 		throw new Error(`[prepareBuiltInCopilotRipgrepShim] Failed to materialize ripgrep shim for ${platformArch}: ${err}`);
 	}
+}
+
+/**
+ * Ensures `extensions/copilot/node_modules/@github/copilot/sdk` exists.
+ * When only the npm-loader stub was packaged, seed `sdk/` from the target
+ * `@github/copilot-{platform}` package already present in the app node_modules.
+ */
+function ensureBuiltInCopilotSdkDirectory(copilotBase: string, copilotPackagePlatformArch: string, appNodeModulesDir: string): string {
+	const copilotSdkBase = path.join(copilotBase, 'sdk');
+	if (fs.existsSync(copilotSdkBase)) {
+		return copilotSdkBase;
+	}
+
+	const platformPackageDir = path.join(appNodeModulesDir, '@github', `copilot-${copilotPackagePlatformArch}`);
+	const platformSdk = path.join(platformPackageDir, 'sdk');
+	if (!fs.existsSync(platformSdk)) {
+		throw new Error(
+			`[prepareBuiltInCopilotRipgrepShim] Copilot SDK directory not found at ${copilotSdkBase}` +
+			` and platform package SDK missing at ${platformSdk}`
+		);
+	}
+
+	fs.mkdirSync(copilotBase, { recursive: true });
+	fs.cpSync(platformSdk, copilotSdkBase, { recursive: true });
+	console.log(`[prepareBuiltInCopilotRipgrepShim] Seeded Copilot SDK from ${platformPackageDir}`);
+	return copilotSdkBase;
 }
 
 function materializeBuiltInCopilotSdkPlatformFiles(copilotPackagePlatformArch: string, tgrepPlatformArch: string, copilotBase: string, appNodeModulesDir: string): void {

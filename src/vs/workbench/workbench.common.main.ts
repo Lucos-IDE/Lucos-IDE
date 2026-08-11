@@ -227,8 +227,8 @@ import './contrib/chat/browser/chat.contribution.js';
 import './contrib/chat/browser/chat.view.contribution.js';
 import './contrib/inlineChat/browser/inlineChat.contribution.js';
 
-// Copilot Voice
-import './contrib/agentsVoice/browser/agentsVoice.contribution.js';
+// LUCOS_FORK: Copilot Agents Voice UI disabled for Lucos.
+// import './contrib/agentsVoice/browser/agentsVoice.contribution.js';
 import './contrib/mcp/browser/mcp.contribution.js';
 import './contrib/mcp/browser/mcp.view.contribution.js';
 import './contrib/chat/browser/chatSessions/chatSessions.contribution.js';
@@ -384,13 +384,15 @@ import './contrib/surveys/browser/languageSurveys.contribution.js';
 
 // Welcome
 import './contrib/welcomeGettingStarted/browser/gettingStarted.contribution.js';
-import './contrib/welcomeAgentSessions/browser/agentSessionsWelcome.contribution.js';
+// LUCOS_FORK: Copilot Agent Sessions welcome disabled for Lucos.
+// import './contrib/welcomeAgentSessions/browser/agentSessionsWelcome.contribution.js';
 import './contrib/welcomeWalkthrough/browser/walkThrough.contribution.js';
 import './contrib/welcomeViews/common/viewsWelcome.contribution.js';
 import './contrib/welcomeViews/common/newFile.contribution.js';
 
 // Welcome Onboarding
-import './contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.js';
+// LUCOS_FORK: Copilot Welcome Onboarding 2026 (GitHub sign-in modal) disabled for Lucos.
+// import './contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.js';
 
 // Onboarding (scenario engine)
 import './contrib/onboarding/browser/onboarding.contribution.js';
@@ -444,6 +446,9 @@ import './contrib/workspaces/browser/workspaces.contribution.js';
 
 // List
 import './contrib/list/browser/list.contribution.js';
+
+// Lucos AI
+import './contrib/lucos/browser/lucos.contribution.js';
 
 // Accessibility Signals
 import './contrib/accessibilitySignals/browser/accessibilitySignal.contribution.js';

@@ -113,6 +113,8 @@ export interface IProductConfiguration {
 
 	readonly downloadUrl?: string;
 	readonly updateUrl?: string;
+	readonly gitHubReleasesRepo?: string;
+	readonly gitHubReleasesToken?: string;
 	readonly webUrl?: string;
 	readonly webEndpointUrlTemplate?: string;
 	readonly webviewContentExternalBaseUrlTemplate?: string;
@@ -163,6 +165,12 @@ export interface IProductConfiguration {
 	readonly languageExtensionTips?: readonly string[];
 	readonly trustedExtensionUrlPublicKeys?: IStringDictionary<string[]>;
 	readonly trustedExtensionAuthAccess?: string[] | IStringDictionary<string[]>;
+
+	/** Google OAuth client ID used for IDE-native Google sign-in. */
+	readonly googleClientId?: string;
+
+	/** Base URL of the Lucos cloud gateway (e.g. https://stagingapi.lucos.com). */
+	readonly lucosGatewayUrl?: string;
 	readonly trustedMcpAuthAccess?: string[] | IStringDictionary<string[]>;
 	readonly inheritAuthAccountPreference?: IStringDictionary<string[]>;
 	readonly trustedExtensionProtocolHandlers?: readonly string[];
@@ -231,7 +239,7 @@ export interface IProductConfiguration {
 		readonly excludeVersionRange?: string;
 	}>;
 	readonly extensionsForceVersionByQuality?: readonly string[];
-	readonly builtInExtensionsEnabledWithAutoUpdates: readonly string[];
+	readonly builtInExtensionsEnabledWithAutoUpdates?: readonly string[];
 	readonly sessionsWindowAllowedExtensions?: readonly string[];
 
 	readonly msftInternalDomains?: string[];

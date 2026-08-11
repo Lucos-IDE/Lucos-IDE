@@ -1,0 +1,1390 @@
+# Lucos IDE — multi-platform release CI (TW-178)
+#
+# Triggers
+# ────────────────────────────────────────────────────────────────────────────
+#  pull_request → main / release/*  : compile + unit tests  (fast gate)
+#  push → lucos-develop              : signed builds + GCS insider (staging API)
+#  push → v* tags                    : signed builds + GCS stable (production API)
+#                                      + GitHub Release
+#  push → lucos-prod                 : no release build (promotion / tag source only)
+#
+# Same signing path for lucos-develop and tags. Environment differs by gateway URL
+# and GCS channel only (insider vs stable) on the shared GCS_RELEASES_BUCKET.
+#
+# This is the canonical Lucos shipping workflow. Do not also run lucos-deploy.yml
+# on the same tags (that workflow is disabled for Lucos releases).
+#
+# Secrets required for signed release builds (lucos-develop + tag pushes)
+# ────────────────────────────────────────────────────────────────────────────
+#  macOS:
+#    APPLE_CERT_P12                      base64-encoded Developer ID cert (.p12)
+#    APPLE_CERT_PASSWORD                  password for the .p12
+#    APPLE_TEAM_ID                        10-character Apple Team ID
+#    APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD App-specific password for notarytool
+#    APPLE_ID                             Apple ID email used for notarytool
+#  Windows (DigiCert KeyLocker — preferred):
+#    SM_API_KEY                           DigiCert ONE service-user API key
+#    SM_CLIENT_CERT_FILE_B64              base64 of DigiCert client auth .p12
+#    SM_CLIENT_CERT_PASSWORD              password for that .p12
+#    SM_KEYPAIR_ALIAS                     KeyLocker keypair alias (optional; default key_1360134193)
+#    SM_HOST                              (optional variable) default https://clientauth.one.digicert.com
+#  Windows (legacy software PFX — optional fallback):
+#    WINDOWS_PFX_DATA                     base64-encoded authenticode cert (.pfx)
+#    WINDOWS_PFX_PASSWORD                 password for that .pfx
+#  Daemon (required — local-daemon is a private sibling repo):
+#    LUCOS_DAEMON_TOKEN                   PAT with Contents: Read on Lucos-IDE/local-daemon
+#      OR
+#    LUCOS_DAEMON_SSH_KEY                 read-only deploy key private key for that repo
+#    (GITHUB_TOKEN cannot checkout sibling private repos — API returns Not Found)
+#    Staging (lucos-develop) checks out local-daemon@develop
+#    Production tags check out local-daemon@main
+#  In-app updates (private GitHub Releases):
+#    LUCOS_GITHUB_RELEASES_TOKEN          fine-grained PAT with Contents: Read on Lucos-IDE/Lucos-IDE
+#  GCS public downloads (Path A — storage.googleapis.com):
+#    GCP_RELEASES_SA_KEY                  JSON key for lucos-releases-ci service account
+#  Repository variables:
+#    GCP_PROJECT_ID                       e.g. vertexai-459806
+#    GCS_RELEASES_BUCKET                  e.g. lucos-releases-staging
+
+name: Lucos Release CI
+
+on:
+  pull_request:
+    branches: [main, 'release/*']
+  push:
+    branches: [lucos-develop]
+    tags: ['v[0-9]+.*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: write
+
+env:
+  # Use 'stable' so create-dmg.ts finds dmg-background-stable.tiff.
+  VSCODE_QUALITY: stable
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reusable step fragments are inlined per-job (GitHub Actions has no step
+# templates, only reusable workflows). Common blocks are kept DRY via the
+# composite actions already present in .github/actions/.
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+
+  # ── 0. Resolve staging vs production ───────────────────────────────────────
+  # lucos-develop → staging API + insider channel (still fully signed)
+  # v* tags       → production API + stable channel + GitHub Release
+  resolve-env:
+    name: Resolve environment
+    runs-on: ubuntu-22.04
+    outputs:
+      environment: ${{ steps.pick.outputs.environment }}
+      gateway_url: ${{ steps.pick.outputs.gateway_url }}
+      channel: ${{ steps.pick.outputs.channel }}
+      quality: ${{ steps.pick.outputs.quality }}
+      should_sign: ${{ steps.pick.outputs.should_sign }}
+      is_production: ${{ steps.pick.outputs.is_production }}
+      product_version: ${{ steps.pick.outputs.product_version }}
+      daemon_ref: ${{ steps.pick.outputs.daemon_ref }}
+    steps:
+      - name: Pick environment
+        id: pick
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+            echo "gateway_url=https://api.lucos.com" >> "$GITHUB_OUTPUT"
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "quality=stable" >> "$GITHUB_OUTPUT"
+            echo "should_sign=true" >> "$GITHUB_OUTPUT"
+            echo "is_production=true" >> "$GITHUB_OUTPUT"
+            echo "product_version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "daemon_ref=main" >> "$GITHUB_OUTPUT"
+          else
+            # lucos-develop pushes and any non-tag release builds use staging.
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+            echo "gateway_url=https://stagingapi.lucos.com" >> "$GITHUB_OUTPUT"
+            echo "channel=insider" >> "$GITHUB_OUTPUT"
+            echo "quality=insider" >> "$GITHUB_OUTPUT"
+            echo "should_sign=true" >> "$GITHUB_OUTPUT"
+            echo "is_production=false" >> "$GITHUB_OUTPUT"
+            # Insider builds keep package.json unless a semver is provided later.
+            echo "product_version=" >> "$GITHUB_OUTPUT"
+            echo "daemon_ref=develop" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved environment for $GITHUB_REF"
+
+  # ── 1. Compile & hygiene ────────────────────────────────────────────────────
+  # Runs on every trigger.  Acts as a fast gate that must pass before expensive
+  # platform builds start.
+  compile:
+    name: Compile & Hygiene
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install apt build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxkbfile-dev \
+            libnotify-bin libkrb5-dev
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: ./.github/actions/restore-node-modules
+        with:
+          key-prefix: node_modules-compile-linux
+          key-args: "linux x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for i in {1..5}; do
+            npm ci && break
+            [ $i -eq 5 ] && { echo "npm ci failed after 5 attempts" >&2; exit 1; }
+            echo "Retry $i…"
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        uses: ./.github/actions/save-node-modules
+
+      - name: Prepare built-in extensions cache key
+        run: |
+          mkdir -p .build
+          node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compile & hygiene checks
+        # Full upstream gate for PRs only. lucos-develop + v* tags are artifact
+        # builds: hygiene/eslint cancel parallel jobs and block shipping.
+        if: github.event_name == 'pull_request'
+        run: |
+          npm exec -- npm-run-all2 -lp \
+            core-ci \
+            hygiene \
+            eslint \
+            valid-layers-check \
+            define-class-fields-check \
+            vscode-dts-compile-check \
+            tsec-compile-check \
+            test-build-scripts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Artifact builds (lucos-develop / v* tags): platform jobs each re-run core-ci.
+      # Keep this gate light to avoid OOM (exit 143) and hygiene cancellations.
+      - name: Compile (build gate)
+        if: github.event_name != 'pull_request'
+        run: npm run test-build-scripts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check cyclic dependencies
+        if: github.event_name == 'pull_request'
+        run: node build/lib/checkCyclicDependencies.ts out-build
+
+  # ── 2. Unit tests (Node.js) ─────────────────────────────────────────────────
+  # Runs on every trigger.  Uses the faster mocha/node test runner (no Electron
+  # required), giving quick feedback without needing a display server.
+  test-unit:
+    name: Unit Tests (Node.js)
+    needs: compile
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: ./.github/actions/restore-node-modules
+        with:
+          key-prefix: node_modules-compile-linux
+          key-args: "linux x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for i in {1..5}; do
+            npm ci && break
+            [ $i -eq 5 ] && { echo "npm ci failed" >&2; exit 1; }
+            echo "Retry $i…"
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Node.js unit tests
+        run: npm run test-node
+
+  # ── 3. macOS arm64 release build → .dmg ────────────────────────────────────
+  build-darwin-arm64:
+    name: Build macOS arm64 (.dmg)
+    needs: [compile, resolve-env]
+    if: github.event_name != 'pull_request'
+    runs-on: macos-14
+    env:
+      VSCODE_ARCH: arm64
+      NPM_ARCH: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install Python & macOS build tools
+        run: |
+          set -e
+          c++ --version
+          xcode-select -print-path
+          python3 -m pip install --break-system-packages setuptools
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: ./.github/actions/restore-node-modules
+        with:
+          key-prefix: node_modules-darwin-arm64
+          key-args: "darwin arm64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for i in {1..5}; do
+            npm ci && break
+            [ $i -eq 5 ] && { echo "npm ci failed" >&2; exit 1; }
+            echo "Retry $i…"
+          done
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GYP_DEFINES: "kerberos_use_rtld=false"
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        uses: ./.github/actions/save-node-modules
+
+      - name: Prepare built-in extensions cache key
+        run: |
+          mkdir -p .build
+          node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch Lucos gateway URL for environment
+        env:
+          LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
+        run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
+
+      - name: Compile (core-ci)
+        run: npm run gulp core-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # min-ci packaging expects .build/extensions/copilot (Azure downloads a
+      # VSIX; local/Lucos builds compile from source instead).
+      - name: Build built-in Copilot extension
+        run: |
+          set -e
+          if [[ ! -d extensions/copilot/node_modules ]]; then
+            npm --prefix extensions/copilot install
+          fi
+          npm --prefix extensions/copilot run compile
+          npm run gulp compile-copilot-extension-build
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & stage lucos-daemon
+        uses: ./.github/actions/build-lucos-daemon
+        with:
+          platform: darwin
+          arch: arm64
+          gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
+
+      - name: Package macOS arm64 app
+        run: npm run gulp lucos-darwin-arm64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify bundled lucos-daemon
+        run: |
+          set -e
+          APP_ROOT="$RUNNER_WORKSPACE/Lucos-darwin-arm64/Lucos.app/Contents/Resources/app"
+          DAEMON="$APP_ROOT/resources/lucos-daemon"
+          PROTO="$APP_ROOT/out/vs/platform/lucos/node/lucosDaemon.embedded.proto"
+          test -x "$DAEMON"
+          test -f "$PROTO"
+          ls -la "$DAEMON" "$PROTO"
+
+      # Non-release refs only. lucos-develop + tags use Developer ID signing below.
+      - name: Ad-hoc codesign macOS app (unsigned builds)
+        if: needs.resolve-env.outputs.should_sign != 'true'
+        run: |
+          set -e
+          APP="$RUNNER_WORKSPACE/Lucos-darwin-arm64/Lucos.app"
+          test -d "$APP"
+          xattr -cr "$APP" || true
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+
+      - name: Import Apple Developer certificate (signed releases only)
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          set -e
+          KEYCHAIN_PATH="$RUNNER_TEMP/buildagent.keychain"
+          KC_PASS=$(openssl rand -base64 32)
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -P "$APPLE_CERT_PASSWORD" \
+            -k "$KEYCHAIN_PATH" \
+            -T /usr/bin/codesign \
+            -A
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$KC_PASS" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user \
+            -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | sed s/\"//g)
+          CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep -oEi "[0-9A-F]{40}" | head -n 1)
+          echo "CODESIGN_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Codesign macOS app (signed releases only)
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        env:
+          AGENT_TEMPDIRECTORY: ${{ runner.temp }}
+          AGENT_BUILDDIRECTORY: ${{ runner.workspace }}
+        run: node build/darwin/sign.ts "$RUNNER_WORKSPACE"
+
+      - name: Create DMG
+        run: |
+          set -e
+          DMG_OUT="$RUNNER_TEMP/dmg"
+          mkdir -p "$DMG_OUT"
+          node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
+          python3 build/darwin/patch-dmg.py \
+            "$DMG_OUT/Lucos-darwin-arm64.dmg" \
+            resources/darwin/code.icns || true
+          mv "$DMG_OUT/Lucos-darwin-arm64.dmg" \
+             "$RUNNER_TEMP/lucos-arm64.dmg"
+          echo "DMG_PATH=$RUNNER_TEMP/lucos-arm64.dmg" >> "$GITHUB_ENV"
+
+      - name: Notarize DMG (signed releases only)
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -e
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload macOS arm64 DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-darwin-arm64
+          path: ${{ runner.temp }}/lucos-arm64.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+      # Also upload the unpacked .app as a zip so the smoke test job can
+      # download and run it without re-building from source.
+      - name: Archive macOS arm64 app for smoke tests
+        run: |
+          set -e
+          APP_ROOT="$RUNNER_WORKSPACE/Lucos-darwin-arm64"
+          APP_NAME=$(node -p "require('./product.json').nameLong").app
+          zip -Xry "$RUNNER_TEMP/Lucos-darwin-arm64-app.zip" \
+            "$APP_ROOT/$APP_NAME"
+        continue-on-error: true
+
+      - name: Upload macOS arm64 app archive (for smoke tests)
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-darwin-arm64-app
+          path: ${{ runner.temp }}/Lucos-darwin-arm64-app.zip
+          if-no-files-found: warn
+          retention-days: 1
+
+  # ── 4. macOS x64 release build → .dmg ──────────────────────────────────────
+  build-darwin-x64:
+    name: Build macOS x64 (.dmg)
+    needs: [compile, resolve-env]
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15-intel
+    env:
+      VSCODE_ARCH: x64
+      NPM_ARCH: x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install Python & macOS build tools
+        run: |
+          c++ --version
+          xcode-select -print-path
+          python3 -m pip install --break-system-packages setuptools || \
+            python3 -m pip install setuptools
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: ./.github/actions/restore-node-modules
+        with:
+          key-prefix: node_modules-darwin-x64
+          key-args: "darwin x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for i in {1..5}; do
+            npm ci && break
+            [ $i -eq 5 ] && { echo "npm ci failed" >&2; exit 1; }
+            echo "Retry $i…"
+          done
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GYP_DEFINES: "kerberos_use_rtld=false"
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        uses: ./.github/actions/save-node-modules
+
+      - name: Prepare built-in extensions cache key
+        run: |
+          mkdir -p .build
+          node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch Lucos gateway URL for environment
+        env:
+          LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
+        run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
+
+      - name: Compile (core-ci)
+        run: npm run gulp core-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build built-in Copilot extension
+        run: |
+          set -e
+          if [[ ! -d extensions/copilot/node_modules ]]; then
+            npm --prefix extensions/copilot install
+          fi
+          npm --prefix extensions/copilot run compile
+          npm run gulp compile-copilot-extension-build
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & stage lucos-daemon
+        uses: ./.github/actions/build-lucos-daemon
+        with:
+          platform: darwin
+          arch: x64
+          gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
+
+      - name: Package macOS x64 app
+        run: npm run gulp lucos-darwin-x64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify bundled lucos-daemon
+        run: |
+          set -e
+          APP_ROOT="$RUNNER_WORKSPACE/Lucos-darwin-x64/Lucos.app/Contents/Resources/app"
+          DAEMON="$APP_ROOT/resources/lucos-daemon"
+          PROTO="$APP_ROOT/out/vs/platform/lucos/node/lucosDaemon.embedded.proto"
+          test -x "$DAEMON"
+          test -f "$PROTO"
+          ls -la "$DAEMON" "$PROTO"
+
+      # Non-release refs only. lucos-develop + tags use Developer ID signing below.
+      - name: Ad-hoc codesign macOS app (unsigned builds)
+        if: needs.resolve-env.outputs.should_sign != 'true'
+        run: |
+          set -e
+          APP="$RUNNER_WORKSPACE/Lucos-darwin-x64/Lucos.app"
+          test -d "$APP"
+          xattr -cr "$APP" || true
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+
+      - name: Import Apple Developer certificate (signed releases only)
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          set -e
+          KEYCHAIN_PATH="$RUNNER_TEMP/buildagent.keychain"
+          KC_PASS=$(openssl rand -base64 32)
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -P "$APPLE_CERT_PASSWORD" \
+            -k "$KEYCHAIN_PATH" \
+            -T /usr/bin/codesign \
+            -A
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$KC_PASS" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user \
+            -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | sed s/\"//g)
+          CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep -oEi "[0-9A-F]{40}" | head -n 1)
+          echo "CODESIGN_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Codesign macOS app (signed releases only)
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        env:
+          AGENT_TEMPDIRECTORY: ${{ runner.temp }}
+          AGENT_BUILDDIRECTORY: ${{ runner.workspace }}
+        run: node build/darwin/sign.ts "$RUNNER_WORKSPACE"
+
+      - name: Create DMG
+        run: |
+          set -e
+          DMG_OUT="$RUNNER_TEMP/dmg"
+          mkdir -p "$DMG_OUT"
+          node build/darwin/create-dmg.ts "$RUNNER_WORKSPACE" "$DMG_OUT"
+          python3 build/darwin/patch-dmg.py \
+            "$DMG_OUT/Lucos-darwin-x64.dmg" \
+            resources/darwin/code.icns || true
+          mv "$DMG_OUT/Lucos-darwin-x64.dmg" \
+             "$RUNNER_TEMP/lucos-x64.dmg"
+          echo "DMG_PATH=$RUNNER_TEMP/lucos-x64.dmg" >> "$GITHUB_ENV"
+
+      - name: Notarize DMG (signed releases only)
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -e
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_NOTARIZE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload macOS x64 DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-darwin-x64
+          path: ${{ runner.temp }}/lucos-x64.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 5. Windows x64 release build → .exe installer ───────────────────────────
+  build-win32-x64:
+    name: Build Windows x64 (.exe installer)
+    needs: [compile, resolve-env]
+    if: github.event_name != 'pull_request'
+    runs-on: windows-2022
+    env:
+      VSCODE_ARCH: x64
+      NPM_ARCH: x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: ./.github/actions/restore-node-modules
+        with:
+          key-prefix: node_modules-win32-x64
+          key-args: "win32 x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Run preinstall patches for native modules before npm ci
+          node build/npm/preinstall.ts
+          for ($i = 1; $i -le 5; $i++) {
+            try { npm ci; break }
+            catch {
+              if ($i -eq 5) { throw }
+              Write-Host "npm ci failed (attempt $i), retrying…"
+              Start-Sleep -Seconds 3
+            }
+          }
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          npm_config_foreground_scripts: 'true'
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        uses: ./.github/actions/save-node-modules
+
+      - name: Prepare built-in extensions cache key
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .build | Out-Null
+          node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch Lucos gateway URL for environment
+        env:
+          LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
+        run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
+
+      - name: Compile (core-ci)
+        run: npm run gulp core-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build built-in Copilot extension
+        shell: pwsh
+        run: |
+          if (-not (Test-Path extensions/copilot/node_modules)) {
+            npm --prefix extensions/copilot install
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          npm --prefix extensions/copilot run compile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run gulp compile-copilot-extension-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          if (-not (Test-Path .build/extensions/copilot)) {
+            throw "Copilot extension missing after compile-copilot-extension-build"
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & stage lucos-daemon
+        uses: ./.github/actions/build-lucos-daemon
+        with:
+          platform: win32
+          arch: x64
+          gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
+
+      - name: Download Explorer context-menu DLL
+        run: node build/win32/explorer-dll-fetcher.ts .build/win32/appx
+        env:
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package Windows x64 app
+        run: npm run gulp lucos-win32-x64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify bundled lucos-daemon
+        shell: pwsh
+        run: |
+          $appRoot = Join-Path $env:RUNNER_WORKSPACE 'Lucos-win32-x64\resources\app'
+          $daemon = Join-Path $appRoot 'resources\lucos-daemon.exe'
+          $proto = Join-Path $appRoot 'out\vs\platform\lucos\node\lucosDaemon.embedded.proto'
+          if (-not (Test-Path $daemon)) { throw "Missing bundled daemon: $daemon" }
+          if (-not (Test-Path $proto)) { throw "Missing embedded proto: $proto" }
+          Get-Item $daemon, $proto | Format-List FullName, Length
+
+      - name: Prepare AppX package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkBins = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\makeappx.exe' -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $sdkBins) { throw 'makeappx.exe not found (Windows SDK required)' }
+          $env:PATH = "$(Split-Path $sdkBins.FullName -Parent);$env:PATH"
+
+          $appRoot = Join-Path $env:RUNNER_WORKSPACE 'Lucos-win32-x64'
+          $manifestDir = Join-Path $appRoot 'appx\manifest'
+          $appxOut = Join-Path $appRoot 'appx\code_x64.appx'
+          if (-not (Test-Path $manifestDir)) { throw "AppX manifest dir missing: $manifestDir" }
+
+          makeappx pack /d $manifestDir /p $appxOut /nv
+          Remove-Item -Path $manifestDir -Recurse -Force
+          if (-not (Test-Path $appxOut)) { throw "AppX not created: $appxOut" }
+          Write-Host "Created $appxOut"
+
+      # Copies build/win32/inno_updater.exe (+ vcruntime) into Lucos-win32-x64/tools
+      # so code.iss [Files] Source: "tools\*" succeeds.
+      - name: Stage Inno updater tools
+        run: npm run gulp lucos-win32-x64-inno-updater
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare DigiCert KeyLocker client certificate
+        id: digicert-prep
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:SM_API_KEY) -or [string]::IsNullOrEmpty($env:SM_CLIENT_CERT_FILE_B64)) {
+            Write-Host "DigiCert KeyLocker secrets not set; skipping KeyLocker setup."
+            Write-Output "enabled=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $certPath = Join-Path $env:RUNNER_TEMP 'sm_client_cert.p12'
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
+          Write-Output "SM_CLIENT_CERT_FILE=$certPath" >> $env:GITHUB_ENV
+          $hostUrl = '${{ vars.SM_HOST }}'
+          if ([string]::IsNullOrEmpty($hostUrl)) { $hostUrl = 'https://clientauth.one.digicert.com' }
+          Write-Output "SM_HOST=$hostUrl" >> $env:GITHUB_ENV
+          $alias = '${{ secrets.SM_KEYPAIR_ALIAS }}'.Trim()
+          if ([string]::IsNullOrEmpty($alias)) { $alias = '${{ vars.SM_KEYPAIR_ALIAS }}'.Trim() }
+          if ([string]::IsNullOrEmpty($alias)) { $alias = 'key_1360134193' }
+          Write-Output "SM_KEYPAIR_ALIAS=$alias" >> $env:GITHUB_ENV
+          Write-Host "KeyLocker enabled (alias_length=$($alias.Length) host=$hostUrl)"
+          Write-Output "enabled=true" >> $env:GITHUB_OUTPUT
+
+      - name: Setup DigiCert KeyLocker client tools
+        if: needs.resolve-env.outputs.should_sign == 'true' && steps.digicert-prep.outputs.enabled == 'true'
+        uses: digicert/code-signing-software-trust-action@v1
+        with:
+          # Need KSP + smctl for Authenticode via signtool (InnoSetup .e32.tmp / .exe).
+          # Simple mode's `smctl sign` skips non-standard PE extensions and exits 0 unsigned.
+          simple-signing-mode: false
+        env:
+          SM_HOST: ${{ env.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+
+      - name: DigiCert KeyLocker healthcheck
+        if: needs.resolve-env.outputs.should_sign == 'true' && steps.digicert-prep.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          SM_HOST: ${{ env.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ env.SM_KEYPAIR_ALIAS }}
+        run: |
+          smctl healthcheck
+          if ($LASTEXITCODE -ne 0) { throw "smctl healthcheck failed" }
+          Write-Host "=== keypair list (CI identity must see SM_KEYPAIR_ALIAS) ==="
+          smctl keypair list
+          if ($LASTEXITCODE -ne 0) { throw "smctl keypair list failed" }
+
+      - name: Sign packaged Windows binaries (KeyLocker or PFX)
+        if: needs.resolve-env.outputs.should_sign == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SM_HOST: ${{ env.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ env.SM_KEYPAIR_ALIAS }}
+          WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          $appRoot = Join-Path $env:RUNNER_WORKSPACE 'Lucos-win32-x64'
+          $hasKeyLocker = -not [string]::IsNullOrEmpty($env:SM_API_KEY) -and (Test-Path -LiteralPath $env:SM_CLIENT_CERT_FILE -ErrorAction SilentlyContinue)
+          $hasPfx = -not [string]::IsNullOrEmpty($env:WINDOWS_PFX_DATA)
+          if (-not $hasKeyLocker -and -not $hasPfx) {
+            Write-Host "No Windows signing credentials; leaving binaries unsigned."
+            exit 0
+          }
+          # Use the job's Node (npm exec would fetch an unrelated node package).
+          node --experimental-strip-types build/azure-pipelines/common/sign-lucos-directory.ts $appRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Windows system-setup installer
+        # Signed builds (lucos-develop + tags): pass --sign-lucos when credentials are present.
+        shell: pwsh
+        run: |
+          $shouldSign = $env:SHOULD_SIGN -eq 'true'
+          $hasKeyLocker = $shouldSign -and -not [string]::IsNullOrEmpty($env:SM_API_KEY) -and (Test-Path -LiteralPath $env:SM_CLIENT_CERT_FILE -ErrorAction SilentlyContinue)
+          $hasPfx = $shouldSign -and -not [string]::IsNullOrEmpty($env:WINDOWS_PFX_DATA)
+          if ($hasKeyLocker -or $hasPfx) {
+            npm run gulp lucos-win32-x64-system-setup -- --sign-lucos
+          } else {
+            npm run gulp lucos-win32-x64-system-setup
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        env:
+          SHOULD_SIGN: ${{ needs.resolve-env.outputs.should_sign }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SM_HOST: ${{ env.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ env.SM_KEYPAIR_ALIAS }}
+          WINDOWS_PFX_DATA: ${{ secrets.WINDOWS_PFX_DATA }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+
+      - name: Rename installer for publish
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem .build\win32-x64\system-setup\*.exe | Select-Object -First 1
+          if (-not $src) { throw "Installer .exe not found in .build\win32-x64\system-setup\" }
+          $dest = "$env:RUNNER_TEMP\lucos.exe"
+          Copy-Item $src.FullName $dest
+          Write-Output "EXE_PATH=$dest" >> $env:GITHUB_ENV
+
+      - name: Upload Windows x64 installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-win32-x64
+          path: ${{ runner.temp }}\lucos.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 6. Linux x64 release build → .AppImage ─────────────────────────────────
+  build-linux-x64:
+    name: Build Linux x64 (.AppImage)
+    needs: [compile, resolve-env]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    env:
+      VSCODE_ARCH: x64
+      NPM_ARCH: x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install apt build + packaging dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxkbfile-dev \
+            libnotify-bin libkrb5-dev \
+            libgtk-3-0 libgbm1 \
+            fuse libfuse2 \
+            dpkg-dev fakeroot
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: ./.github/actions/restore-node-modules
+        with:
+          key-prefix: node_modules-linux-x64
+          key-args: "linux x64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for i in {1..5}; do
+            npm ci && break
+            [ $i -eq 5 ] && { echo "npm ci failed" >&2; exit 1; }
+            echo "Retry $i…"
+          done
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        uses: ./.github/actions/save-node-modules
+
+      - name: Prepare built-in extensions cache key
+        run: |
+          mkdir -p .build
+          node build/azure-pipelines/common/computeBuiltInDepsCacheKey.ts > .build/builtindepshash
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin
+        uses: actions/cache/restore@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch Lucos gateway URL for environment
+        env:
+          LUCOS_GATEWAY_URL: ${{ needs.resolve-env.outputs.gateway_url }}
+          LUCOS_GITHUB_RELEASES_TOKEN: ${{ secrets.LUCOS_GITHUB_RELEASES_TOKEN }}
+          LUCOS_PRODUCT_VERSION: ${{ needs.resolve-env.outputs.product_version }}
+        run: node --experimental-strip-types .github/scripts/patch-lucos-gateway.ts
+
+      - name: Compile (core-ci)
+        run: npm run gulp core-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build built-in Copilot extension
+        run: |
+          set -e
+          if [[ ! -d extensions/copilot/node_modules ]]; then
+            npm --prefix extensions/copilot install
+          fi
+          npm --prefix extensions/copilot run compile
+          npm run gulp compile-copilot-extension-build
+          # Published @github/copilot is a stub; sdk/ is seeded at package time.
+          test -d .build/extensions/copilot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & stage lucos-daemon
+        uses: ./.github/actions/build-lucos-daemon
+        with:
+          platform: linux
+          arch: x64
+          gateway-url: ${{ needs.resolve-env.outputs.gateway_url }}
+          ref: ${{ needs.resolve-env.outputs.daemon_ref }}
+          token: ${{ secrets.LUCOS_DAEMON_TOKEN }}
+          ssh-key: ${{ secrets.LUCOS_DAEMON_SSH_KEY }}
+
+      - name: Package Linux x64 app
+        run: npm run gulp lucos-linux-x64-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify bundled lucos-daemon
+        run: |
+          set -e
+          APP_ROOT="$RUNNER_WORKSPACE/Lucos-linux-x64/resources/app"
+          DAEMON="$APP_ROOT/resources/lucos-daemon"
+          PROTO="$APP_ROOT/out/vs/platform/lucos/node/lucosDaemon.embedded.proto"
+          test -x "$DAEMON"
+          test -f "$PROTO"
+          ls -la "$DAEMON" "$PROTO"
+
+      - name: Import GPG signing key
+        if: needs.resolve-env.outputs.should_sign == 'true' && env.GPG_PRIVATE_KEY != ''
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "${{ secrets.GPG_KEY_ID }}:6:" | gpg --import-ownertrust
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Build AppImage
+        run: npm run gulp lucos-linux-x64-build-appimage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+
+      - name: Locate AppImage artifact
+        run: |
+          set -e
+          SRC=$(ls .build/linux/appimage/Lucos-*-linux-x64.AppImage 2>/dev/null | head -1)
+          test -n "$SRC"
+          cp "$SRC" "$RUNNER_TEMP/lucos.AppImage"
+          if [[ -f "${SRC}.asc" ]]; then
+            cp "${SRC}.asc" "$RUNNER_TEMP/lucos.AppImage.asc"
+          fi
+          echo "APPIMAGE_PATH=$RUNNER_TEMP/lucos.AppImage" >> "$GITHUB_ENV"
+
+      - name: Upload Linux x64 AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-linux-x64-appimage
+          path: |
+            ${{ env.APPIMAGE_PATH }}
+            ${{ env.APPIMAGE_PATH }}.asc
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build .deb package
+        if: github.event_name == 'push'
+        run: |
+          npm run gulp lucos-linux-x64-prepare-deb
+          npm run gulp lucos-linux-x64-build-deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rename .deb for publish
+        if: github.event_name == 'push'
+        run: |
+          set -e
+          SRC=$(ls .build/linux/deb/amd64/deb/*.deb 2>/dev/null | head -1)
+          test -n "$SRC"
+          cp "$SRC" "$RUNNER_TEMP/lucos.deb"
+          echo "DEB_PATH=$RUNNER_TEMP/lucos.deb" >> "$GITHUB_ENV"
+
+      - name: Upload Linux x64 .deb artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucos-linux-x64-deb
+          path: ${{ runner.temp }}/lucos.deb
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ── 7. Smoke tests (macOS arm64) ────────────────────────────────────────────
+  # Downloads the arm64 app archive produced by build-darwin-arm64, compiles the
+  # smoke test suite, and runs Electron smoke tests against the real packaged app.
+  test-smoke:
+    name: Smoke Tests (macOS arm64)
+    needs: [build-darwin-arm64]
+    if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/lucos-develop'
+    runs-on: macos-14
+    env:
+      VSCODE_ARCH: arm64
+      NPM_ARCH: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install Python & macOS build tools
+        run: |
+          python3 -m pip install --break-system-packages setuptools
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: ./.github/actions/restore-node-modules
+        with:
+          key-prefix: node_modules-darwin-arm64
+          key-args: "darwin arm64 $(node -p process.arch)"
+
+      - name: Install root dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for i in {1..5}; do
+            npm ci && break
+            [ $i -eq 5 ] && { echo "npm ci failed" >&2; exit 1; }
+            echo "Retry $i…"
+          done
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          VSCODE_ARCH: ${{ env.VSCODE_ARCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GYP_DEFINES: "kerberos_use_rtld=false"
+
+      - name: Download macOS arm64 app archive
+        uses: actions/download-artifact@v4
+        with:
+          name: lucos-darwin-arm64-app
+          path: ${{ runner.temp }}/app-download
+
+      - name: Extract macOS arm64 app
+        run: |
+          set -e
+          APP_ROOT="$RUNNER_WORKSPACE/Lucos-darwin-arm64"
+          mkdir -p "$APP_ROOT"
+          unzip -q "$RUNNER_TEMP/app-download/Lucos-darwin-arm64-app.zip" \
+            -d "$APP_ROOT"
+          # List to confirm extraction
+          ls "$APP_ROOT"
+
+      - name: Install smoke test dependencies
+        run: |
+          set -e
+          npm ci --prefix test/automation
+          npm ci --prefix test/smoke
+
+      - name: Compile smoke tests
+        working-directory: test/smoke
+        run: npm run compile
+
+      - name: Diagnostics before smoke test
+        run: ps -ef
+        continue-on-error: true
+
+      - name: Run smoke tests (Electron)
+        timeout-minutes: 25
+        run: |
+          APP_NAME=$(node -p "require('./product.json').nameLong").app
+          APP_PATH="$RUNNER_WORKSPACE/Lucos-darwin-arm64/$APP_NAME"
+          npm run smoketest-no-compile -- \
+            --tracing \
+            --build "$APP_PATH"
+        env:
+          VSCODE_SKIP_PRELAUNCH: '1'
+
+      - name: Diagnostics after smoke test
+        if: always()
+        run: ps -ef
+        continue-on-error: true
+
+      - name: Upload crash reports
+        uses: actions/upload-artifact@v4
+        if: failure()
+        continue-on-error: true
+        with:
+          name: crash-dump-smoke-darwin-arm64-${{ github.run_attempt }}
+          path: .build/crashes
+          if-no-files-found: ignore
+
+      - name: Upload smoke test logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: logs-smoke-darwin-arm64-${{ github.run_attempt }}
+          path: .build/logs
+          if-no-files-found: ignore
+
+  # ── 8. Publish to GCS (+ GitHub Release on tags) ────────────────────────────
+  # Tags → channel=stable (production API, signed)
+  # lucos-develop push → channel=insider (staging API, signed)
+  publish-releases:
+    name: Publish releases (GCS)
+    needs:
+      - resolve-env
+      - build-darwin-arm64
+      - build-darwin-x64
+      - build-win32-x64
+      - build-linux-x64
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/lucos-develop')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve channel & version
+        id: meta
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+            echo "quality=stable" >> "$GITHUB_OUTPUT"
+          else
+            SHORT_SHA="${GITHUB_SHA:0:7}"
+            echo "channel=insider" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "tag_name=" >> "$GITHUB_OUTPUT"
+            echo "quality=insider" >> "$GITHUB_OUTPUT"
+          fi
+          echo "gateway=${{ needs.resolve-env.outputs.gateway_url }}"
+          echo "environment=${{ needs.resolve-env.outputs.environment }}"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lucos-*
+          merge-multiple: true
+          path: dist/
+
+      - name: List artifacts
+        run: |
+          # Drop smoke-test / app zip helpers if present; keep installers only.
+          rm -f dist/*-app.zip dist/*.zip 2>/dev/null || true
+          ls -lh dist/
+
+      - name: Authenticate to Google Cloud
+        if: vars.GCS_RELEASES_BUCKET != ''
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_RELEASES_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        if: vars.GCS_RELEASES_BUCKET != ''
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Publish releases to GCS
+        if: vars.GCS_RELEASES_BUCKET != ''
+        env:
+          DIST_DIR: dist
+          GCS_BUCKET: ${{ vars.GCS_RELEASES_BUCKET }}
+          GCS_CHANNEL: ${{ steps.meta.outputs.channel }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          QUALITY: ${{ steps.meta.outputs.quality }}
+          GIT_REF: ${{ github.sha }}
+        run: |
+          chmod +x .github/scripts/publish-releases-gcs.sh
+          .github/scripts/publish-releases-gcs.sh
+
+      # Rename after GCS publish so website latest/stable/* paths keep canonical names.
+      - name: Prepare GitHub release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          GIT_REF: ${{ github.sha }}
+        run: |
+          chmod +x .github/scripts/prepare-github-release-assets.sh
+          .github/scripts/prepare-github-release-assets.sh "$RELEASE_VERSION" "$GIT_REF" dist
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/lucos-*.dmg
+            dist/lucos-*.exe
+            dist/lucos-*.deb
+            dist/lucos-*.AppImage
+            dist/lucos-*.AppImage.asc
+            dist/latest.json
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summarize publish
+        run: |
+          CHANNEL="${{ steps.meta.outputs.channel }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          BUCKET="${{ vars.GCS_RELEASES_BUCKET }}"
+          MANIFEST=""
+          if [[ -n "$BUCKET" ]]; then
+            MANIFEST="https://storage.googleapis.com/${BUCKET}/releases/${CHANNEL}.json"
+          fi
+          echo "### Lucos publish" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Channel | \`$CHANNEL\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`$VERSION\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Manifest | \`${MANIFEST:-skipped (set GCS_RELEASES_BUCKET)}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ref | \`$GITHUB_REF\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifacts |" >> "$GITHUB_STEP_SUMMARY"
+          ls dist/ | while read f; do echo "  - \`$f\`" >> "$GITHUB_STEP_SUMMARY"; done

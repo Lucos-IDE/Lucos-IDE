@@ -1,6 +1,7 @@
 .DS_Store
 .cache
 npm-debug.log
+.lucos-*.log
 Thumbs.db
 node_modules/
 .tmp/
@@ -13,6 +14,8 @@ src/vs/base/browser/ui/codicons/codicon/codicon.ttf
 /extensions/**/out/
 build/node_modules
 build/darwin/.dmgbuild
+build/darwin/.dmg-bg-tmp
+build/darwin/.dmg-bg-preview
 coverage/
 test_data/
 test-results/

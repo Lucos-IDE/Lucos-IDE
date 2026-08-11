@@ -1,0 +1,67 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.lucos-sign-in-editor {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	background: var(--vscode-editor-background);
+	overflow: auto;
+}
+
+.lucos-sign-in-page {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 16px;
+	max-width: 380px;
+	width: 100%;
+	padding: 48px 32px;
+	text-align: center;
+}
+
+.lucos-sign-in-logo {
+	font-size: 64px;
+	line-height: 1;
+	margin-bottom: 4px;
+}
+
+.lucos-sign-in-title {
+	margin: 0;
+	font-size: 1.7em;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+	letter-spacing: -0.3px;
+}
+
+.lucos-sign-in-subtitle {
+	margin: 0;
+	font-size: 0.95em;
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.6;
+	max-width: 300px;
+}
+
+.lucos-sign-in-divider {
+	width: 100%;
+	border: none;
+	border-top: 1px solid var(--vscode-widget-border);
+	margin: 4px 0;
+}
+
+.lucos-sign-in-buttons {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 100%;
+}
+
+.lucos-sign-in-buttons .monaco-button {
+	padding: 10px 20px;
+	font-size: 0.9em;
+	justify-content: center;
+	border-radius: 6px;
+}

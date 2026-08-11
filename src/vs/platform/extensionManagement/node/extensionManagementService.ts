@@ -340,7 +340,10 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 	private async downloadExtension(extension: IGalleryExtension, operation: InstallOperation, verifySignature: boolean, clientTargetPlatform?: TargetPlatform): Promise<{ readonly location: URI; readonly verificationStatus: ExtensionSignatureVerificationCode | undefined }> {
 		if (verifySignature) {
 			const value = this.configurationService.getValue(VerifyExtensionSignatureConfigKey);
-			verifySignature = isBoolean(value) ? value : true;
+			// Open VSX packages are typically unsigned, and vsce-sign may be absent in
+			// Lucos builds. Default to skipping verification when the setting is unset
+			// (shared process may not see the workbench contribution default).
+			verifySignature = isBoolean(value) ? value : false;
 		}
 		const { location, verificationStatus } = await this.extensionsDownloader.download(extension, operation, verifySignature, clientTargetPlatform);
 		const shouldRequireSignature = shouldRequireRepositorySignatureFor(extension.private, await this.extensionGalleryManifestService.getExtensionGalleryManifest());
@@ -944,7 +947,7 @@ export class ExtensionsScanner extends Disposable {
 		const builtinExtensions = await this.extensionsScannerService.scanSystemExtensions({});
 		const userExtensions = await this.extensionsScannerService.scanAllUserExtensions();
 		const staleExtensions = userExtensions.filter(userExtension => {
-			if (!this.productService.builtInExtensionsEnabledWithAutoUpdates.some(id => id.toLowerCase() === userExtension.identifier.id.toLowerCase())) {
+			if (!(this.productService.builtInExtensionsEnabledWithAutoUpdates ?? []).some(id => id.toLowerCase() === userExtension.identifier.id.toLowerCase())) {
 				return false;
 			}
 			const builtinExtension = builtinExtensions.find(e => areSameExtensions(e.identifier, userExtension.identifier));

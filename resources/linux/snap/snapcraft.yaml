@@ -1,10 +1,10 @@
 name: @@NAME@@
 version: '@@VERSION@@'
-summary: Code editing. Redefined.
+summary: AI-native code editor
 description: |
-  Visual Studio Code is a new choice of tool that combines the
-  simplicity of a code editor with what developers need for the core
-  edit-build-debug cycle.
+  Lucos is an AI-native code editor built on VS Code. It provides intelligent
+  code editing, AI-powered search, and a local daemon for fast workspace
+  indexing and semantic code understanding.
 
 architectures:
   - build-on: amd64
